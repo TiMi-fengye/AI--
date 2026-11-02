@@ -1,0 +1,39 @@
+﻿<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>人员管理系统 - 状态</title>
+<style>
+body{font-family:sans-serif;max-width:600px;margin:50px auto;padding:20px;background:#f1f5f9}
+.card{background:#fff;border-radius:12px;padding:20px;margin:12px 0;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+h1{color:#4f46e5}
+.status{display:flex;align-items:center;gap:8px;margin:4px 0}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.dot.green{background:#10b981}
+.dot.red{background:#ef4444}
+</style></head>
+<body>
+<h1>👥 人员管理系统</h1>
+<div class="card">
+  <h3>📡 服务器状态</h3>
+  <div class="status"><span class="dot green"></span> 服务运行中</div>
+  <div class="status"><span class="dot green"></span> 数据库已连接（浏览器本地存储）</div>
+</div>
+<div class="card">
+  <h3>🔗 访问地址</h3>
+  <p>本机: <a href="http://localhost:8080/">http://localhost:8080</a></p>
+  <p>内网: 请使用部署机器的局域网 IP 加端口 8080 访问</p>
+</div>
+<div class="card">
+  <h3>📋 功能模块</h3>
+  <ul>
+    <li>📊 数据概览 - 统计卡片、考勤趋势、部门分布</li>
+    <li>🏢 组织架构 - 左右分栏架构图</li>
+    <li>👤 人员信息 - 分部门展示、管理岗标识</li>
+    <li>⏰ 考勤管理 - 签到签退、一键到岗</li>
+    <li>📋 请假管理 - 申请、审批</li>
+  </ul>
+</div>
+<p style="text-align:center;color:#94a3b8;font-size:12px;margin-top:30px;">
+  双击「启动服务器.bat」启动服务 · 按 Ctrl+C 停止
+</p>
+</body>
+</html>

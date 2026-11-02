@@ -1,0 +1,27 @@
+{
+  "name": "华北一部酒仙桥人力资源管理平台",
+  "short_name": "人力资源",
+  "id": "./",
+  "description": "华北一部酒仙桥人力资源管理平台 - 员工考勤、请假、加班一站式管理",
+  "start_url": "./login.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#050b18",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "port": 8080,
+  "staticIP": "",
+  "description": "HR personnel management system",
+  "feishu": {
+    "appId": "",
+    "appSecret": "",
+    "receiveId": "",
+    "receiveIdType": "chat_id",
+    "loginEnabled": false,
+    "autoProvision": false,
+    "oauthRedirectUri": ""
+  },
+  "wechat": {
+    "appId": "",
+    "appSecret": "",
+    "loginEnabled": false,
+    "autoProvision": false,
+    "oauthRedirectUri": ""
+  },
+  "mysql": {
+    "enabled": false,
+    "host": "127.0.0.1",
+    "port": 3306,
+    "database": "hr_system",
+    "user": "hrsystem",
+    "password": ""
+  }
+}

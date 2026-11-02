@@ -1,0 +1,20 @@
+# local secrets and production data
+server/config.json
+server/data/*
+!server/data/.gitkeep
+server/repair-backup/
+server/*.log
+server/*.pid
+server/mysql.env
+
+# local build and generated archives
+.pptx-build/
+*.zip
+mobile-deploy-*.zip
+
+# local/editor files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+node_modules/
