@@ -25,5 +25,12 @@
     "database": "hr_system",
     "user": "hrsystem",
     "password": ""
+  },
+  "ai": {
+    "enabled": false,
+    "endpoint": "https://api.deepseek.com/chat/completions",
+    "model": "deepseek-chat",
+    "apiKey": ""
   }
 }
+
