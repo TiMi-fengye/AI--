@@ -275,6 +275,23 @@ const server = http.createServer((req, res) => {
   let url = req.url.split("?")[0];
   if (url === "/") url = "/index.html";
 
+  // AI 统一代理：密钥只保存在服务端配置或环境变量中，浏览器不直连第三方接口。
+  if (url === "/api/ai/chat" && req.method === "POST") {
+    readRequestBody(req).then(async body => {
+      const ai = CONFIG.ai || {};
+      const endpoint = process.env.HR_AI_ENDPOINT || ai.endpoint;
+      const apiKey = process.env.HR_AI_API_KEY || ai.apiKey;
+      const model = String(body.model || process.env.HR_AI_MODEL || ai.model || "deepseek-chat");
+      if (!endpoint || !apiKey) { json(res, 503, { error: { message: "AI 尚未配置，请联系管理员完成服务端 AI 配置" } }); return; }
+      const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey };
+      const upstream = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify({ ...body, model, stream: false }) });
+      const text = await upstream.text();
+      res.writeHead(upstream.status, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(text);
+    }).catch(e => json(res, 502, { error: { message: "AI 服务请求失败: " + e.message } }));
+    return;
+  }
+
   if (url === "/api/feishu/config") {
     if (req.method === "GET") {
       const f = CONFIG.feishu || {};
@@ -559,3 +576,4 @@ startServer().catch(function (e) {
   console.error("服务器启动失败: " + e.message);
   process.exit(1);
 });
+
