@@ -6,8 +6,8 @@ const AI = {
   _configKey: 'personnel_ai_config',
 
   defaultConfig: {
-    endpoint: 'http://localhost:11434/v1/chat/completions',
-    model: 'qwen2.5',
+    endpoint: '/api/ai/chat',
+    model: 'deepseek-chat',
     apiKey: '',
     systemPrompt: '',
     maxTokens: 2048,
@@ -19,7 +19,10 @@ const AI = {
   getConfig() {
     try {
       const raw = localStorage.getItem(this._configKey);
-      return raw ? { ...this.defaultConfig, ...JSON.parse(raw) } : { ...this.defaultConfig };
+      const cfg = raw ? { ...this.defaultConfig, ...JSON.parse(raw) } : { ...this.defaultConfig };
+      // 迁移旧版默认 Ollama 地址，改由服务端代理，兼容局域网访问。
+      if (!cfg.endpoint || /localhost:11434|127\.0\.0\.1:11434/.test(cfg.endpoint)) cfg.endpoint = '/api/ai/chat';
+      return cfg;
     } catch (e) {
       return { ...this.defaultConfig };
     }
@@ -353,3 +356,4 @@ const AI = {
     return div.innerHTML;
   },
 };
+
