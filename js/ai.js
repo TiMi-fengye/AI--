@@ -15,6 +15,7 @@ const AI = {
   },
 
   messages: [],
+  _messageKey() { return 'personnel_ai_messages_' + (Auth.currentUser() ? Auth.currentUser().username : ''); },
 
   getConfig() {
     try {
@@ -265,12 +266,12 @@ const AI = {
 
   _saveMessages() {
     const toSave = this.messages.slice(-50);
-    try { localStorage.setItem('personnel_ai_messages', JSON.stringify(toSave)); } catch(e) {}
+    try { localStorage.setItem(this._messageKey(), JSON.stringify(toSave)); } catch(e) {}
   },
 
   _loadMessages() {
     try {
-      const raw = localStorage.getItem('personnel_ai_messages');
+      const raw = localStorage.getItem(this._messageKey());
       if (raw) {
         this.messages = JSON.parse(raw);
         const container = document.getElementById('aiMessages');
@@ -297,7 +298,7 @@ const AI = {
   clearChat() {
     if (!App.confirm('确定清空所有对话历史？')) return;
     this.messages = [];
-    localStorage.removeItem('personnel_ai_messages');
+    localStorage.removeItem(this._messageKey());
     const container = document.getElementById('aiMessages');
     if (container) {
       container.innerHTML =
@@ -357,3 +358,13 @@ const AI = {
   },
 };
 
+
+// AI资料及聊天仅管理员可访问，隐藏导航和直接调用采用同一身份检查。
+Object.keys(AI).forEach(function(name) {
+  if (typeof AI[name] !== 'function') return;
+  var action = AI[name];
+  AI[name] = function() {
+    if (!Auth.isAdmin()) return name === 'getConfig' ? {} : undefined;
+    return action.apply(this, arguments);
+  };
+});

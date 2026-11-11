@@ -18,10 +18,13 @@ const Org = {
   },
 
   _getGroupInfo(position) {
-    return this._positionGroups[position] || { group: "其他", icon: "👤", order: 99 };
+    return Object.prototype.hasOwnProperty.call(this._positionGroups, position) ? this._positionGroups[position] : { group: "其他", icon: "👤", order: 99 };
   },
 
+  _requireAdmin() { if (Auth.isAdmin()) return true; App.toast('仅管理员可管理组织架构', 'error'); return false; },
+
   render(container) {
+    if (!this._requireAdmin()) { container.textContent = '无权查看组织架构'; return; }
     var tree = Store.getOrgStructure();
     var allEmps = Store.getEmployees();
     var total = allEmps.length;
@@ -74,7 +77,8 @@ const Org = {
   _renderDeptSections(allEmps) {
     if (!allEmps || allEmps.length === 0) return "";
     var deptNames = Store.getDepartments();
-    var empDepts = {};
+    allEmps = allEmps.filter(function (emp) { return Auth.canAccessEmployee(emp.id); });
+    var empDepts = Object.create(null);
     for (var i = 0; i < allEmps.length; i++) { var d = allEmps[i].department; if (d) empDepts[d] = 1; }
     var allDepts = [];
     for (var j = 0; j < deptNames.length; j++) { if (allDepts.indexOf(deptNames[j]) < 0) allDepts.push(deptNames[j]); }
@@ -90,7 +94,7 @@ const Org = {
       var deptName = allDepts[d];
       var deptEmps = nonMgrs.filter(function(e){ return e.department === deptName; });
       if (deptEmps.length === 0) continue;
-      var groups = {};
+      var groups = Object.create(null);
       for (var e = 0; e < deptEmps.length; e++) {
         var emp = deptEmps[e];
         var info = this._getGroupInfo(emp.position);
@@ -101,8 +105,8 @@ const Org = {
       var sorted = [];
       for (var k in groups) sorted.push(groups[k]);
       sorted.sort(function(a,b){ return a.order - b.order; });
-      var accent = deptAccents[deptName] || "#6366f1";
-      var icon = deptIcons[deptName] || "📁";
+      var accent = Object.prototype.hasOwnProperty.call(deptAccents, deptName) ? deptAccents[deptName] : "#6366f1";
+      var icon = Object.prototype.hasOwnProperty.call(deptIcons, deptName) ? deptIcons[deptName] : "📁";
       html += '<div class="dept-card">' +
         '<div class="dept-hd" style="border-left:3px solid ' + accent + ';">' +
           '<span class="dept-hd-icon">' + icon + '</span>' +
@@ -120,8 +124,8 @@ const Org = {
           var ec = this._getAvatarColor(emp.name);
           var init = emp.name ? emp.name.charAt(0) : "?";
           empHtml +=
-            '<div class="org-emp" onclick="Org.showPersonDetail(' + emp.id + ')">' +
-              '<div class="org-av" style="background:' + ec + ';">' + init + '</div>' +
+            '<div class="org-emp" onclick="Org.showPersonDetail(' + Number(emp.id) + ')">' +
+              '<div class="org-av" style="background:' + ec + ';">' + this._escapeHtml(init) + '</div>' +
               '<div class="org-ei">' +
                 '<div class="org-en">' + this._escapeHtml(emp.name) + '</div>' +
                 '<div class="org-ep">' + this._escapeHtml(emp.position || "") + '</div>' +
@@ -159,6 +163,7 @@ const Org = {
   },
 
   showPersonDetail(id) {
+    if (!Auth.canAccessEmployee(id)) { App.toast('无权查看该人员资料', 'error'); return; }
     var emp = Store.getEmployees().find(function(e){ return e.id === id; });
     if (!emp) return;
     var info = this._getGroupInfo(emp.position);
@@ -173,7 +178,7 @@ const Org = {
     }
     App.openModal("人员详情",
       '<div style="text-align:center;padding:16px 0;">' +
-        '<div class="org-av" style="width:56px;height:56px;font-size:22px;margin:0 auto 12px;background:' + color + ';">' + initial + '</div>' +
+        '<div class="org-av" style="width:56px;height:56px;font-size:22px;margin:0 auto 12px;background:' + color + ';">' + this._escapeHtml(initial) + '</div>' +
         '<h2 style="font-size:20px;font-weight:700;margin:0 0 4px;">' + this._escapeHtml(emp.name) + '</h2>' +
         '<span class="tag ' + (isMgr ? "tag-warning" : "tag-primary") + '">' + this._escapeHtml(emp.position || "员工") + '</span>' +
       '</div>' +
@@ -184,6 +189,7 @@ const Org = {
 
   /* ===== 以下保持原有功能不变 ===== */
   showAddChildFormByName(deptName) {
+    if (!this._requireAdmin()) return;
     var tree = Store.getOrgStructure();
     var find = function(node) {
       if (node.name === deptName && node.type === "department") return node;
@@ -196,6 +202,8 @@ const Org = {
   },
 
   showAddChildForm(parentId) {
+    if (!this._requireAdmin()) return;
+    parentId = Number(parentId);
     var tree = Store.getOrgStructure();
     var parent = Store._findNodeById(tree, parentId);
     if (!parent) return;
@@ -209,6 +217,7 @@ const Org = {
   },
 
   showAddForm() {
+    if (!this._requireAdmin()) return;
     App.openModal("添加部门",
       '<div class="form-group"><label>部门名称 *</label><input type="text" class="form-control" id="orgNodeName" placeholder="请输入部门名称"></div>' +
       '<div class="form-group"><label>上级部门</label><select class="form-control" id="orgParentId">' + this._getParentOptions() + '</select></div>',
@@ -217,16 +226,18 @@ const Org = {
   },
 
   _getParentOptions() {
+    if (!Auth.isAdmin()) return '';
     var tree = Store.getOrgStructure();
-    var opts = ['<option value="' + tree.id + '">' + this._escapeHtml(tree.name) + '（顶级）</option>'];
+    var opts = ['<option value="' + Number(tree.id) + '">' + this._escapeHtml(tree.name) + '（顶级）</option>'];
     var flatten = function(node) {
-      if (node.children) { node.children.forEach(function(c){opts.push('<option value="'+c.id+'">　'+c.name+'</option>');flatten(c);}); }
+      if (node.children) { node.children.forEach(function(c){opts.push('<option value="'+Number(c.id)+'">　'+Org._escapeHtml(c.name)+'</option>');flatten(c);}); }
     };
     flatten(tree);
     return opts.join("");
   },
 
   saveNode() {
+    if (!this._requireAdmin()) return;
     var name = document.getElementById("orgNodeName").value.trim();
     if (!name) { App.toast("请输入名称", "error"); return; }
     var parentId = parseInt(document.getElementById("orgParentId").value);
@@ -237,6 +248,8 @@ const Org = {
   },
 
   showEditForm(id) {
+    if (!this._requireAdmin()) return;
+    id = Number(id);
     var node = Store._findNodeById(Store.getOrgStructure(), id);
     if (!node) return;
     App.openModal("编辑部门",
@@ -246,6 +259,7 @@ const Org = {
   },
 
   saveEdit() {
+    if (!this._requireAdmin()) return;
     var id = parseInt(document.getElementById("orgEditId").value);
     var name = document.getElementById("orgEditName").value.trim();
     if (!name) { App.toast("请输入名称", "error"); return; }
@@ -254,6 +268,7 @@ const Org = {
   },
 
   showEditCompanyForm() {
+    if (!this._requireAdmin()) return;
     var tree = Store.getOrgStructure();
     App.openModal("编辑公司名称",
       '<div class="form-group"><label>公司名称 *</label><input type="text" class="form-control" id="orgCompanyName" value="' + this._escapeHtml(tree.name) + '"></div>',
@@ -262,6 +277,7 @@ const Org = {
   },
 
   saveCompanyName() {
+    if (!this._requireAdmin()) return;
     var name = document.getElementById("orgCompanyName").value.trim();
     if (!name) { App.toast("请输入名称", "error"); return; }
     Store.updateOrgNode(1, { name: name });
@@ -269,6 +285,7 @@ const Org = {
   },
 
   deleteNode(id) {
+    if (!this._requireAdmin()) return;
     if (App.confirm("确定删除此部门？所有子部门也将被删除。")) {
       var node = Store._findNodeById(Store.getOrgStructure(), id);
       if (node && Store.deleteOrgNode(id)) { App.toast('"' + node.name + '" 已删除', "info"); App.navigate("org"); }
@@ -276,6 +293,7 @@ const Org = {
   },
 
   exportOrg() {
+    if (!this._requireAdmin()) return;
     var tree = Store.getOrgStructure();
     var counts = Store.getOrgEmployeeCounts();
     var lines = [];

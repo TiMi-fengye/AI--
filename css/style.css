@@ -2308,3 +2308,4 @@ textarea.form-control {
     display: none;
   }
 }
+[hidden] { display: none !important; }

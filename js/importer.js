@@ -5,6 +5,7 @@
 const ImportData = {
   /** 一键导入 */
   run() {
+    if (!Auth.isAdmin()) return { success: false, message: "仅管理员可重置人员数据" };
     // 清空所有数据，让 Store.init() 重新填充默认数据
     const prefix = "personnel_management_";
     const keys = [

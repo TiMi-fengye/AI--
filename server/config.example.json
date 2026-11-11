@@ -6,17 +6,7 @@
     "appId": "",
     "appSecret": "",
     "receiveId": "",
-    "receiveIdType": "chat_id",
-    "loginEnabled": false,
-    "autoProvision": false,
-    "oauthRedirectUri": ""
-  },
-  "wechat": {
-    "appId": "",
-    "appSecret": "",
-    "loginEnabled": false,
-    "autoProvision": false,
-    "oauthRedirectUri": ""
+    "receiveIdType": "chat_id"
   },
   "mysql": {
     "enabled": false,
@@ -33,4 +23,3 @@
     "apiKey": ""
   }
 }
-

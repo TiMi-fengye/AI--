@@ -10,523 +10,206 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="format-detection" content="telephone=no">
+  <link rel="stylesheet" href="css/style.css?v=20261111phone">
+  <link rel="stylesheet" href="css/theme.css?v=20261111phone">
   <style>
-    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      background: #050b18;
-      color: #fff;
-    }
-
-    .bg-canvas::after {
-      content: '';
-      position: absolute;
-      inset: 0;
-      background: rgba(2, 6, 23, 0.35);
-    }
-
-    .bg-canvas {
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      z-index: 0;
-      overflow: hidden;
-      background:
-        url('login-bg.png') center center / cover no-repeat,
-        linear-gradient(135deg, #050b18 0%, #0b2e54 100%);
-    }
-
-    .bg-canvas::before {
-      content: '';
-      position: absolute;
-      top: -50%; left: -50%;
-      width: 200%; height: 200%;
-      background:
-        radial-gradient(2px 2px at 20% 30%, rgba(255,255,255,0.3), transparent),
-        radial-gradient(2px 2px at 40% 70%, rgba(255,255,255,0.2), transparent),
-        radial-gradient(1px 1px at 60% 20%, rgba(255,255,255,0.4), transparent),
-        radial-gradient(2px 2px at 80% 60%, rgba(255,255,255,0.2), transparent),
-        radial-gradient(1px 1px at 10% 80%, rgba(255,255,255,0.3), transparent),
-        radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.2), transparent),
-        radial-gradient(2px 2px at 90% 10%, rgba(255,255,255,0.3), transparent),
-        radial-gradient(1px 1px at 30% 90%, rgba(255,255,255,0.15), transparent),
-        radial-gradient(1px 1px at 50% 50%, rgba(255,255,255,0.1), transparent),
-        radial-gradient(2px 2px at 85% 85%, rgba(255,255,255,0.15), transparent);
-      background-size: 200px 200px;
-      animation: starDrift 60s linear infinite;
-      pointer-events: none;
-    }
-
-    @keyframes starDrift {
-      from { transform: translate(0, 0) rotate(0deg); }
-      to { transform: translate(5%, 5%) rotate(3deg); }
-    }
-
-    .orb {
-      position: absolute;
-      border-radius: 50%;
-      filter: blur(80px);
-      opacity: 0.3;
-      will-change: transform;
-      pointer-events: none;
-    }
-    .orb-1 {
-      width: 500px; height: 500px;
-      background: #2e8cff;
-      top: -15%; left: -10%;
-      animation: orbFloat1 18s ease-in-out infinite;
-    }
-    .orb-2 {
-      width: 400px; height: 400px;
-      background: #7b61ff;
-      bottom: -20%; right: -10%;
-      animation: orbFloat2 22s ease-in-out infinite;
-    }
-    .orb-3 {
-      width: 300px; height: 300px;
-      background: #18c8e8;
-      top: 50%; left: 60%;
-      animation: orbFloat3 16s ease-in-out infinite;
-    }
-
-    @keyframes orbFloat1 {
-      0%, 100% { transform: translate(0, 0) scale(1); }
-      33% { transform: translate(60px, 40px) scale(1.05); }
-      66% { transform: translate(-30px, 80px) scale(0.95); }
-    }
-    @keyframes orbFloat2 {
-      0%, 100% { transform: translate(0, 0) scale(1); }
-      50% { transform: translate(-80px, -60px) scale(1.08); }
-    }
-    @keyframes orbFloat3 {
-      0%, 100% { transform: translate(0, 0) scale(1); }
-      33% { transform: translate(40px, -50px) scale(0.92); }
-      66% { transform: translate(-60px, 20px) scale(1.06); }
-    }
-
-    .bg-grid {
-      position: absolute;
-      inset: 0;
-      background-image:
-        linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
-      background-size: 60px 60px;
-      pointer-events: none;
-    }
-
-    .login-wrapper {
-      position: relative;
-      z-index: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-      padding: 24px;
-    }
-
-    .login-container { width: 420px; max-width: 100%; }
-
-    .login-card {
-      background: rgba(255, 255, 255, 0.04);
-      backdrop-filter: blur(24px) saturate(1.4);
-      -webkit-backdrop-filter: blur(24px) saturate(1.4);
-      border-radius: 24px;
-      padding: 48px 40px 40px;
-      border: 1px solid rgba(255, 255, 255, 0.08);
-      box-shadow:
-        0 8px 32px rgba(0, 0, 0, 0.3),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
-      animation: cardEntry 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
-    }
-
-    @keyframes cardEntry {
-      from { opacity: 0; transform: translateY(30px) scale(0.96); }
-      to { opacity: 1; transform: translateY(0) scale(1); }
-    }
-
-    .login-brand { text-align: center; margin-bottom: 36px; }
-
-    .brand-icon {
-      width: 72px; height: 72px; margin: 0 auto 16px;
-      background: linear-gradient(135deg, #3f8cff, #16c9e8);
-      border-radius: 20px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 32px;
-      box-shadow: 0 8px 24px rgba(40, 185, 255, 0.35);
-      animation: iconPulse 3s ease-in-out infinite;
-    }
-    @keyframes iconPulse {
-      0%, 100% { box-shadow: 0 8px 24px rgba(40, 185, 255, 0.35); }
-      50% { box-shadow: 0 8px 32px rgba(40, 205, 255, 0.55); }
-    }
-
-    .brand-title {
-      font-size: 22px; font-weight: 700; letter-spacing: 0.5px;
-      background: linear-gradient(135deg, #e0e7ff, #a5b4fc);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-    }
-    .brand-sub {
-      font-size: 12px; color: rgba(255,255,255,0.35);
-      letter-spacing: 3px; text-transform: uppercase; margin-top: 4px; font-weight: 400;
-    }
-
-    .form-group { margin-bottom: 20px; }
-    .form-group .input-wrap { position: relative; }
-
-    .form-group .input-icon {
-      position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
-      width: 20px; height: 20px;
-      color: rgba(255,255,255,0.25);
-      pointer-events: none; transition: color 0.25s;
-    }
-
-    .form-control {
-      width: 100%; padding: 14px 14px 14px 46px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.10);
-      border-radius: 14px; font-size: 15px; color: #fff;
-      outline: none; transition: all 0.25s ease; font-family: inherit;
-    }
-
-    .form-control::placeholder { color: rgba(255,255,255,0.20); }
-
-    .form-control:focus {
-      background: rgba(255, 255, 255, 0.08);
-      border-color: rgba(99, 102, 241, 0.5);
-      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
-    }
-
-    .form-control:focus ~ .input-icon { color: rgba(165, 180, 252, 0.7); }
-
-    .pwd-toggle {
-      position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
-      background: none; border: none; color: rgba(255,255,255,0.25);
-      cursor: pointer; padding: 4px; border-radius: 6px; transition: color 0.2s; line-height: 1;
-    }
-    .pwd-toggle:hover { color: rgba(255,255,255,0.6); }
-
-    .login-options {
-      display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 24px; font-size: 13px;
-    }
-
-    .remember-me {
-      display: flex; align-items: center; gap: 8px;
-      color: rgba(255,255,255,0.45); cursor: pointer; user-select: none; transition: color 0.2s;
-    }
-    .remember-me:hover { color: rgba(255,255,255,0.7); }
-
-    .remember-me input[type="checkbox"] {
-      appearance: none; width: 18px; height: 18px;
-      border: 1.5px solid rgba(255,255,255,0.15);
-      border-radius: 5px; cursor: pointer; transition: all 0.2s; flex-shrink: 0;
-    }
-    .remember-me input[type="checkbox"]:checked {
-      background: linear-gradient(135deg, #3f8cff, #16c9e8);
-      border-color: #6366f1;
-    }
-    .remember-me input[type="checkbox"]:checked::after {
-      content: ''; position: absolute; left: 5px; top: 2px;
-      width: 5px; height: 9px;
-      border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
-    }
-
-    .forgot-link {
-      color: rgba(165, 180, 252, 0.6);
-      text-decoration: none; transition: color 0.2s; font-size: 13px;
-    }
-    .forgot-link:hover { color: rgba(165, 180, 252, 0.9); }
-
-    .login-btn {
-      width: 100%; padding: 15px;
-      background: linear-gradient(135deg, #3f8cff, #16c9e8);
-      border: none; border-radius: 14px; color: #fff;
-      font-size: 16px; font-weight: 600; cursor: pointer;
-      transition: all 0.3s ease; position: relative; overflow: hidden;
-      letter-spacing: 1px; font-family: inherit;
-    }
-
-    .login-btn::before {
-      content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-      background: linear-gradient(135deg, #6ab3ff, #66e7ff);
-      opacity: 0; transition: opacity 0.3s;
-    }
-    .login-btn:hover::before { opacity: 1; }
-    .login-btn:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 8px 28px rgba(40, 185, 255, 0.4);
-    }
-    .login-btn:active { transform: translateY(0); }
-    .login-btn span { position: relative; z-index: 1; }
-    .login-btn:disabled { opacity: 0.7; cursor: not-allowed; transform: none !important; }
-
-    .btn-spinner {
-      display: none; width: 20px; height: 20px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: #fff; border-radius: 50%;
-      animation: spin 0.6s linear infinite;
-      position: absolute; left: 50%; top: 50%; margin: -10px 0 0 -10px; z-index: 2;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .login-btn.loading .btn-spinner { display: block; }
-    .login-btn.loading span { opacity: 0; }
-
-    .login-error {
-      display: none; align-items: center; gap: 8px;
-      margin-top: 16px; padding: 10px 14px;
-      background: rgba(239, 68, 68, 0.12);
-      border: 1px solid rgba(239, 68, 68, 0.2);
-      border-radius: 12px; font-size: 13px; color: #fca5a5;
-      animation: shake 0.4s ease;
-    }
-    @keyframes shake {
-      0%, 100% { transform: translateX(0); }
-      25% { transform: translateX(-6px); }
-      75% { transform: translateX(6px); }
-    }
-
-    .login-footer {
-      text-align: center; margin-top: 28px;
-      font-size: 12px; color: rgba(255,255,255,0.2); letter-spacing: 0.5px;
-    }
-
-    .install-app-btn {
-      display: block; width: 100%; margin: 0 auto 14px; padding: 10px 14px;
-      border: 1px solid rgba(165,180,252,0.34); border-radius: 12px;
-      background: rgba(99,102,241,0.16); color: #c7d2fe; font: inherit;
-      font-size: 13px; cursor: pointer; transition: background 0.2s, border-color 0.2s;
-    }
-    .install-app-btn:hover { background: rgba(99,102,241,0.28); border-color: rgba(165,180,252,0.58); }
-
-    .sys-badge {
-      display: inline-flex; align-items: center; gap: 6px;
-      margin-bottom: 28px; padding: 6px 16px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.06);
-      border-radius: 100px; font-size: 11px;
-      color: rgba(255,255,255,0.3); letter-spacing: 0.5px;
-      animation: badgeFade 1s 0.3s both;
-    }
-    @keyframes badgeFade {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .sys-badge .dot {
-      width: 6px; height: 6px; border-radius: 50%;
-      background: #10b981; animation: dotPulse 2s ease-in-out infinite;
-    }
-    @keyframes dotPulse {
-      0%, 100% { opacity: 0.6; }
-      50% { opacity: 1; }
-    }
-
-    @media (max-width: 480px) {
-      .login-card { padding: 32px 24px 28px; border-radius: 20px; }
-      .brand-icon { width: 60px; height: 60px; font-size: 26px; }
-      .brand-title { font-size: 19px; }
-      .form-control { font-size: 14px; padding: 13px 13px 13px 42px; }
-      .login-btn { padding: 14px; font-size: 15px; }
-      .orb { opacity: 0.15; }
-    }
-
-    @media (max-width: 360px) {
-      .login-card { padding: 24px 18px; }
-      .login-options { flex-direction: column; gap: 10px; align-items: flex-start; }
-    }
+    [hidden] { display: none !important; }
+    body { margin:0; min-height:100vh; min-height:100dvh; overflow-y:auto; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif; color:#edf2ff; background:#050b18; }
+    .login-background { position:fixed; inset:0; z-index:-1; background:linear-gradient(110deg,rgba(3,9,24,.75),rgba(5,20,43,.55)),url('login-bg.png') center / cover no-repeat; }
+    .login-wrapper { min-height:100vh; min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:32px 20px; }
+    .login-container { width:440px; max-width:100%; transition:width .18s ease; }
+    .login-container.registration-mode { width:900px; }
+    .login-card { padding:36px; background:rgba(10,22,45,.88); border:1px solid rgba(172,200,255,.14); border-radius:24px; box-shadow:0 24px 80px #0006; backdrop-filter:blur(22px); }
+    .login-brand { text-align:center; margin-bottom:26px; }
+    .brand-icon { margin:0 auto 14px; display:grid; place-items:center; width:62px; height:62px; border-radius:18px; background:linear-gradient(135deg,#3f8cff,#16c9e8); font-size:28px; }
+    .brand-title { font-size:20px; line-height:1.65; color:#e7eeff; }
+    .brand-sub { margin-top:6px; color:#8599bc; font-size:10px; letter-spacing:2px; }
+    .auth-tabs { display:flex; padding:4px; border-radius:12px; margin-bottom:24px; background:#ffffff08; border:1px solid #ffffff0d; }
+    .auth-tabs button { flex:1; border:0; padding:10px; font:inherit; font-size:14px; color:#93a7c9; border-radius:9px; background:transparent; cursor:pointer; }
+    .auth-tabs button[aria-selected="true"] { background:#4f8cff29; color:#dbe9ff; }
+    .login-card .form-group { margin-bottom:18px; }
+    .login-card label { display:block; margin-bottom:7px; font-size:13px; color:#adc0df; }
+    .login-card .form-control { width:100%; min-height:44px; padding:11px 13px; border:1px solid #ffffff1f; border-radius:10px; font:inherit; font-size:14px; color:#eef3ff; background:#ffffff08; color-scheme:dark; }
+    .login-card .form-control::placeholder { color:#6f83a6; }
+    .login-card .form-control:focus { outline:0; border-color:#559bff; box-shadow:0 0 0 3px #4f8cff1a; }
+    .login-card .form-control[readonly] { opacity:.7; }
+    .login-card select option { background:#122343; color:#edf2ff; }
+    .login-card .form-row { display:grid; grid-template-columns:1fr 1fr; gap:0 20px; }
+    .login-card .form-row > .form-group { min-width:0; }
+    .password-wrap { position:relative; }
+    .password-wrap input { padding-right:70px !important; }
+    .password-toggle { position:absolute; right:10px; top:50%; transform:translateY(-50%); border:0; background:transparent; color:#9fbdf0; padding:7px; font-size:12px; cursor:pointer; }
+    .login-options { display:flex; justify-content:space-between; gap:12px; margin:0 0 22px; align-items:center; font-size:12px; }
+    .login-options .remember-me { display:flex; gap:7px; align-items:center; margin:0; font-size:12px; }
+    .remember-me input { accent-color:#559bff; }
+    .text-button { border:0; background:transparent; color:#a2bfff; font:inherit; font-size:12px; cursor:pointer; padding:0; }
+    .login-btn { display:block; width:100%; padding:14px; border:0; border-radius:11px; font:inherit; font-weight:600; color:#fff; background:linear-gradient(115deg,#3f8cff,#13aecf); cursor:pointer; }
+    .login-btn:hover { filter:brightness(1.1); }
+    .login-btn:disabled { opacity:.6; cursor:wait; }
+    .auth-intro { margin:0 0 22px; padding:13px 16px; color:#abc0df; background:#4f8cff0d; border:1px solid #4f8cff24; border-radius:10px; line-height:1.8; font-size:12px; }
+    .auth-section-title { font-size:15px; margin:24px 0 16px; color:#e3ecff; }
+    .login-status { margin-top:18px; padding:11px 14px; border:1px solid #ef444447; border-radius:10px; background:#ef444416; color:#fca5a5; font-size:13px; line-height:1.65; white-space:pre-line; }
+    .login-status[data-kind="info"] { border-color:#60a5fa47; background:#3b82f616; color:#bdd8ff; }
+    .login-footer { padding-top:22px; text-align:center; color:#7a8fac; font-size:11px; line-height:1.8; }
+    .install-app-btn { display:block; margin:0 auto 14px; border:1px solid #9bbfff40; background:#4f8cff15; color:#bed3fa; border-radius:10px; padding:9px 14px; cursor:pointer; }
+    .setup-entry { text-align:center; margin-top:18px; }
+    #registerForm .btn { padding:7px 12px; font-size:12px; }
+    #registerForm hr { border:0; border-top:1px solid #ffffff13; }
+    #registerForm #empResumeName, #registerForm #empCredentialName { color:#98afd1 !important; }
+    @media(max-width:600px) { .login-wrapper { padding:20px 12px; } .login-card { padding:26px 20px; border-radius:18px; } .login-card .form-row { grid-template-columns:1fr; } .brand-title { font-size:18px; } .registration-mode .login-brand { margin-bottom:20px; } }
+    @media(prefers-reduced-motion:reduce) { .login-container { transition:none; } }
   </style>
 </head>
 <body>
-
-  <div class="bg-canvas">
-    <div class="orb orb-1"></div>
-    <div class="orb orb-2"></div>
-    <div class="orb orb-3"></div>
-    <div class="bg-grid"></div>
-  </div>
-
-  <div class="login-wrapper">
-    <div class="login-container">
-
-      <div style="text-align:center;">
-        <div class="sys-badge">
-          <span class="dot"></span>
-          安全内网 · 加密通道
-        </div>
-      </div>
-
+  <div class="login-background" aria-hidden="true"></div>
+  <main class="login-wrapper">
+    <div class="login-container" id="authContainer">
       <div class="login-card">
-
         <div class="login-brand">
-          <div class="brand-icon">👥</div>
+          <div class="brand-icon" aria-hidden="true">👥</div>
           <h1 class="brand-title">华北一部酒仙桥人力资源管理平台</h1>
-          <p class="brand-sub">Personnel Management System</p>
+          <p class="brand-sub">PERSONNEL MANAGEMENT SYSTEM</p>
         </div>
-
-        <div class="form-group">
-          <div class="input-wrap">
-            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="12" cy="8" r="4"></circle>
-              <path d="M20 21a8 8 0 1 0-16 0"></path>
-            </svg>            <input type="text" class="form-control" id="loginUsername" value="admin" placeholder="请输入账号" autocomplete="username">
-          </div>
+        <div class="auth-tabs" role="tablist" aria-label="账号服务">
+          <button type="button" id="loginTab" role="tab" aria-selected="true" aria-controls="loginPanel" onclick="showAuthMode('login')">登录</button>
+          <button type="button" id="registerTab" role="tab" aria-selected="false" aria-controls="registerPanel" onclick="showAuthMode('register')">手机号注册</button>
         </div>
-
-        <div class="form-group">
-          <div class="input-wrap">
-            <svg class="input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-            </svg>            <input type="password" class="form-control" id="loginPassword" placeholder="请输入密码" autocomplete="current-password">            <button class="pwd-toggle" id="pwdToggle" type="button" onclick="togglePassword()" aria-label="切换密码可见">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                <circle cx="12" cy="12" r="3"></circle>
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        <div class="login-options">
-          <label class="remember-me">
-            <input type="checkbox" id="rememberMe">
-            记住账号
-          </label>          <a href="#" class="forgot-link" onclick="return false;">忘记密码？</a>
-        </div>
-
-        <button class="login-btn" id="loginBtn" onclick="doLogin()">
-          <span>登录</span>
-          <div class="btn-spinner"></div>
-        </button>
-
-        <button class="login-btn" id="wechatLoginBtn" onclick="doWechatLogin()" style="display:none;margin-top:12px;background:linear-gradient(135deg,#07b46a,#20c978);">
-          <span>使用微信扫码登录</span>
-          <div class="btn-spinner"></div>
-        </button>
-        <p id="wechatLoginHint" style="display:none;text-align:center;margin-top:10px;color:rgba(255,255,255,0.52);font-size:12px;">通过微信授权验证身份，不需要输入微信密码</p>
-
-        <div class="login-error" id="loginError"></div>
-
+        <section id="loginPanel" role="tabpanel" aria-labelledby="loginTab">
+          <form id="loginForm">
+            <div class="form-group"><label for="loginUsername">手机号 / 管理账号</label><input type="text" class="form-control" id="loginUsername" placeholder="请输入手机号或管理账号" autocomplete="username" required maxlength="80"></div>
+            <div class="form-group"><label for="loginPassword">密码</label><div class="password-wrap"><input type="password" class="form-control" id="loginPassword" placeholder="请输入密码" autocomplete="current-password" required><button class="password-toggle" type="button" onclick="togglePassword('loginPassword', this)" aria-label="显示密码">显示</button></div></div>
+            <div class="login-options"><label class="remember-me"><input type="checkbox" id="rememberMe">记住账号</label><button type="button" class="text-button" onclick="showLoginStatus('忘记密码请联系管理员重置。', 'info')">忘记密码？</button></div>
+            <button class="login-btn" id="loginBtn" type="submit">登录</button>
+          </form>
+        </section>
+        <section id="registerPanel" role="tabpanel" aria-labelledby="registerTab" hidden>
+          <p class="auth-intro">注册时请填写人员资料，带 * 为必填。人员性质、人员属性、工作属性、部门、状态、楼栋可稍后补充；注册后可在“我的资料”中核对和维护。</p>
+          <form id="registerForm">
+            <h2 class="auth-section-title">人员信息</h2>
+            <div id="registrationFields"></div>
+            <h2 class="auth-section-title">设置登录密码</h2>
+            <div class="form-row">
+              <div class="form-group"><label for="registerPassword">密码 *（至少8位）</label><input class="form-control" id="registerPassword" type="password" autocomplete="new-password" placeholder="请设置至少8位密码" minlength="8" maxlength="128" required></div>
+              <div class="form-group"><label for="registerConfirm">确认密码 *</label><input class="form-control" id="registerConfirm" type="password" autocomplete="new-password" placeholder="请再次输入密码" minlength="8" maxlength="128" required></div>
+            </div>
+            <button class="login-btn" id="registerBtn" type="submit">注册并登录</button>
+          </form>
+        </section>
+        <section id="setupPanel" hidden>
+          <p class="auth-intro">首次使用，请在本机设置管理员密码。管理员账号为 admin，可查看全部信息并分配楼长负责的楼栋。</p>
+          <form id="setupForm">
+            <div class="form-group"><label for="setupPassword">管理员密码（至少12位）</label><input class="form-control" type="password" id="setupPassword" autocomplete="new-password" minlength="12" maxlength="128" required></div>
+            <div class="form-group"><label for="setupConfirm">确认密码</label><input class="form-control" type="password" id="setupConfirm" autocomplete="new-password" minlength="12" maxlength="128" required></div>
+            <button class="login-btn" id="setupBtn" type="submit">初始化管理员并登录</button>
+          </form>
+        </section>
+        <div class="login-status" id="loginError" role="alert" hidden></div>
+        <div class="setup-entry" id="setupEntry" hidden><button type="button" class="text-button" onclick="showAuthMode('setup')">首次使用：初始化管理员</button></div>
       </div>
-
-      <div class="login-footer">
-        <button class="install-app-btn" id="installAppBtn" type="button" hidden>📲 安装到手机桌面</button>
-        <span>&copy; 2026 华北一部酒仙桥人力资源管理平台 v1.0</span>
-        <span style="margin:0 8px;">·</span>
-        <span>全员在岗 <span id="onlineCount">0</span></span>
-      </div>
-
+      <footer class="login-footer"><button class="install-app-btn" id="installAppBtn" type="button" hidden>📲 安装到手机桌面</button>&copy; 2026 华北一部酒仙桥人力资源管理平台</footer>
     </div>
-  </div>
-
-  <script src="js/store.js?v=20261031wechat"></script>
-  <script src="js/auth.js?v=20261031wechat"></script>
-  <script src="js/wechat.js?v=20261031wechat"></script>
-  <script src="js/mobile.js?v=20261031mobile2"></script>
+  </main>
+  <script src="js/store.js?v=20261111phone"></script>
+  <script src="js/auth.js?v=20261111phone"></script>
+  <script src="js/employees.js?v=20261111phone"></script>
+  <script src="js/mobile.js?v=20261111phone"></script>
   <script>
-    function togglePassword() {
-      var pwd = document.getElementById('loginPassword');
-      var btn = document.getElementById('pwdToggle');
-      if (pwd.type === 'password') {
-        pwd.type = 'text';
-        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
-      } else {
-        pwd.type = 'password';
-        btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    // 共享人员表单的附件操作在登录页使用同一条状态提示。
+    const App = { today: function() { return new Date().toISOString().slice(0, 10); }, toast: function(message, type) { showLoginStatus(message, type === 'error' ? 'error' : 'info'); } };
+    let registrationReady = false;
+    function showLoginStatus(message, kind) {
+      const status = document.getElementById('loginError');
+      status.textContent = message;
+      status.dataset.kind = kind || 'error';
+      status.hidden = false;
+    }
+    function clearLoginStatus() { document.getElementById('loginError').hidden = true; }
+    function showAuthMode(mode) {
+      if (mode === 'register' && !registrationReady) {
+        document.getElementById('registrationFields').innerHTML = Employees._formHtml(null, { registration: true });
+        Employees._pendingResume = { data: '', name: '' };
+        Employees._pendingCredential = { data: '', name: '' };
+        Employees._resumeText = '';
+        registrationReady = true;
+      }
+      document.getElementById('loginPanel').hidden = mode !== 'login';
+      document.getElementById('registerPanel').hidden = mode !== 'register';
+      document.getElementById('setupPanel').hidden = mode !== 'setup';
+      document.getElementById('loginTab').setAttribute('aria-selected', String(mode === 'login'));
+      document.getElementById('registerTab').setAttribute('aria-selected', String(mode === 'register'));
+      document.getElementById('authContainer').classList.toggle('registration-mode', mode === 'register');
+      clearLoginStatus();
+    }
+    function togglePassword(id, button) {
+      const input = document.getElementById(id);
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      button.textContent = show ? '隐藏' : '显示';
+      button.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+    }
+    async function submitAuth(button, action) {
+      if (button.disabled) return;
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = '处理中…';
+      clearLoginStatus();
+      try {
+        const result = await action();
+        if (!result || !result.success) throw new Error(result && result.message || '操作失败，请重试');
+        window.location.href = 'index.html';
+      } catch (error) {
+        showLoginStatus(error.message || '无法连接服务，请稍后重试');
+        button.disabled = false;
+        button.textContent = label;
       }
     }
-
-    function doLogin() {
-      var username = document.getElementById('loginUsername').value.trim();
-      var password = document.getElementById('loginPassword').value.trim();
-      var errEl = document.getElementById('loginError');
-      var btn = document.getElementById('loginBtn');
-      errEl.style.display = 'none';
-      if (!username || !password) {
-        errEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> 请输入账号和密码';
-        errEl.style.display = 'flex';
-        return;
-      }
-      Auth.init();
-      var result = Auth.login(username, password);
-      if (result.success) {
-        btn.classList.add('loading');
-        btn.disabled = true;
-        errEl.style.display = 'none';
-        setTimeout(function() { window.location.href = 'index.html'; }, 500);
-      } else {
-        errEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg> ' + result.message;
-        errEl.style.display = 'flex';
-        btn.classList.remove('loading');
-        var card = document.querySelector('.login-card');
-        card.style.animation = 'none';
-        card.offsetHeight;
-        card.style.animation = 'shake 0.4s ease';
-      }
-    }
-
-    function doWechatLogin() {
-      var btn = document.getElementById('wechatLoginBtn');
-      var errEl = document.getElementById('loginError');
-      if (!btn || typeof Wechat === 'undefined') return;
-      btn.classList.add('loading');
-      btn.disabled = true;
-      errEl.style.display = 'none';
-      Wechat.startLogin()
-        .then(function(profile) { return Wechat.loadLoginConfig().then(function(cfg) { return { profile: profile, cfg: cfg }; }); })
-        .then(function(result) {
-          var login = Auth.loginWithWechatProfile(result.profile, result.cfg);
-          if (!login.success) throw new Error(login.message);
-          window.location.href = 'index.html';
-        })
-        .catch(function(err) {
-          errEl.textContent = err.message || '微信登录失败';
-          errEl.style.display = 'flex';
-          btn.classList.remove('loading');
-          btn.disabled = false;
-        });
-    }
-
-    document.addEventListener('DOMContentLoaded', function() {
-      if (typeof Wechat !== 'undefined') {
-        Wechat.loadLoginConfig().then(function(cfg) {
-          if (cfg && cfg.enabled && cfg.appIdConfigured !== false && cfg.appSecretConfigured !== false) {
-            document.getElementById('wechatLoginBtn').style.display = 'block';
-            document.getElementById('wechatLoginHint').style.display = 'block';
-          }
-        });
-      }
-      if (typeof Store !== 'undefined') { Store.init(); }
-      Auth.init();
-      if (window.MobileClient) MobileClient.init();
-      if (Auth.isLoggedIn()) { window.location.href = 'index.html'; return; }
-      var remembered = localStorage.getItem('personnel_remembered_user');
-      if (remembered) {
-        document.getElementById('loginUsername').value = remembered;
-        document.getElementById('rememberMe').checked = true;
-      }
-      document.getElementById('loginPassword').addEventListener('keydown', function(e) {
-        if (e.key === 'Enter') doLogin();
+    async function doLogin(event) {
+      if (event) event.preventDefault();
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      if (!username || !password) { showLoginStatus('请输入手机号或管理账号和密码'); return; }
+      await submitAuth(document.getElementById('loginBtn'), async function() {
+        const result = await Auth.login(username, password);
+        if (result.success) {
+          if (document.getElementById('rememberMe').checked) localStorage.setItem('personnel_remembered_user', username);
+          else localStorage.removeItem('personnel_remembered_user');
+        }
+        return result;
       });
-      document.getElementById('loginUsername').focus();
-      var employees = Store.get('employees');
-      if (employees) { document.getElementById('onlineCount').textContent = employees.length + ' ?'; }
-      var origLogin = doLogin;
-      doLogin = function() {
-        var cb = document.getElementById('rememberMe');
-        var val = document.getElementById('loginUsername').value.trim();
-        if (cb.checked && val) { localStorage.setItem('personnel_remembered_user', val); }
-        else { localStorage.removeItem('personnel_remembered_user'); }
-        origLogin();
-      };
+    }
+    async function doRegister(event) {
+      event.preventDefault();
+      const employee = Employees.readFormData();
+      const password = document.getElementById('registerPassword').value;
+      const confirm = document.getElementById('registerConfirm').value;
+      if (!employee.name) { showLoginStatus('请输入姓名'); return; }
+      if (!/^1[3-9]\d{9}$/.test(employee.phone)) { showLoginStatus('请输入有效的11位手机号'); return; }
+      if (password.length < 8) { showLoginStatus('密码至少需要8位'); return; }
+      if (password !== confirm) { showLoginStatus('两次密码不一致'); return; }
+      if (employee.joinDate && employee.leaveDate && employee.leaveDate < employee.joinDate) { showLoginStatus('离职日期不能早于入职日期'); return; }
+      await submitAuth(document.getElementById('registerBtn'), function() { return Auth.register(employee.phone, password, employee); });
+    }
+    async function doSetup(event) {
+      event.preventDefault();
+      const password = document.getElementById('setupPassword').value;
+      if (password.length < 12) { showLoginStatus('管理员密码至少需要12位'); return; }
+      if (password !== document.getElementById('setupConfirm').value) { showLoginStatus('两次密码不一致'); return; }
+      await submitAuth(document.getElementById('setupBtn'), function() { return Auth.setupAdmin(password); });
+    }
+    document.addEventListener('DOMContentLoaded', async function() {
+      document.getElementById('loginForm').addEventListener('submit', doLogin);
+      document.getElementById('registerForm').addEventListener('submit', doRegister);
+      document.getElementById('setupForm').addEventListener('submit', doSetup);
+      if (window.MobileClient) MobileClient.init();
+      const remembered = localStorage.getItem('personnel_remembered_user');
+      if (remembered) { document.getElementById('loginUsername').value = remembered; document.getElementById('rememberMe').checked = true; }
+      try {
+        const status = await Auth.init();
+        if (Auth.isLoggedIn()) { window.location.href = 'index.html'; return; }
+        const localHost = ['localhost', '127.0.0.1', '[::1]'].indexOf(window.location.hostname) >= 0;
+        document.getElementById('setupEntry').hidden = !(status && status.setupRequired && status.setupAllowed !== false && localHost);
+      } catch (error) { showLoginStatus(error.message || '服务连接失败，请确认本地服务已经启动'); }
     });
   </script>
-
 </body>
 </html>
-

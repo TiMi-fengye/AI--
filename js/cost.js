@@ -16,6 +16,7 @@ const Cost = {
     return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
   },
   render(container) {
+    if (!Auth.canAccessPage('cost')) { container.textContent = '无权查看费用结算'; return; }
     Store.refreshRates();
     var ym = this._month();
     container.innerHTML =
@@ -33,16 +34,18 @@ const Cost = {
     this.renderSettlement();
   },
   renderSettlement() {
+    if (!Auth.canAccessPage('cost')) { App.toast('无权查看费用结算', 'error'); return; }
     var ymEl = document.getElementById('costYm');
     var container = document.getElementById('costSettlementContent');
     if (!ymEl || !container) return;
     var yearMonth = ymEl.value;
+    if (!/^\d{4}-\d{2}$/.test(yearMonth)) { container.textContent = '请选择有效的月份'; return; }
     var settlement = Store.getOrCalcSettlement(yearMonth);
-    var records = settlement && settlement.records ? settlement.records : [];
+    var records = settlement && Array.isArray(settlement.records) ? settlement.records.filter(function (record) { return Auth.canAccessEmployee(record.employeeId); }) : [];
     var totalOt = records.reduce(function(sum, r) { return sum + (Number(r.otPay) || 0); }, 0);
     var totalLv = records.reduce(function(sum, r) { return sum + (Number(r.lvDeduct) || 0); }, 0);
     var balance = totalOt - totalLv;
-    var dept = {}, buildings = {};
+    var dept = Object.create(null), buildings = Object.create(null);
     records.forEach(function(r) {
       var d = r.department || '未分配';
       var b = r.building || '未分配';
@@ -68,7 +71,7 @@ const Cost = {
     }).join('');
     container.innerHTML =
       '<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);">' +
-        '<div class="stat-card primary"><div class="stat-icon">👥</div><div class="stat-label">人员数</div><div class="stat-value">' + (settlement.totalEmployees || 0) + '</div></div>' +
+        '<div class="stat-card primary"><div class="stat-icon">👥</div><div class="stat-label">人员数</div><div class="stat-value">' + records.length + '</div></div>' +
         '<div class="stat-card success"><div class="stat-icon">⏰</div><div class="stat-label">加班费</div><div class="stat-value">+' + this._fmt(totalOt) + '</div></div>' +
         '<div class="stat-card danger"><div class="stat-icon">📉</div><div class="stat-label">请假扣款</div><div class="stat-value">-' + this._fmt(totalLv) + '</div></div>' +
         '<div class="stat-card info"><div class="stat-icon">💰</div><div class="stat-label">费用合计</div><div class="stat-value">' + this._fmt(balance) + '</div></div>' +
@@ -77,9 +80,10 @@ const Cost = {
         '<div class="card"><div class="card-header"><h3>🏢 部门费用</h3></div><div class="card-body"><div class="table-responsive"><table><thead><tr><th>部门</th><th>人数</th><th>加班费</th><th>请假扣款</th><th>合计</th></tr></thead><tbody>' + groupRows(dept) + '</tbody></table></div></div></div>' +
         '<div class="card"><div class="card-header"><h3>🏢 楼栋费用</h3></div><div class="card-body"><div class="table-responsive"><table><thead><tr><th>楼栋</th><th>人数</th><th>加班费</th><th>请假扣款</th><th>合计</th></tr></thead><tbody>' + groupRows(buildings) + '</tbody></table></div></div></div>' +
       '</div>' +
-      '<div class="card" style="margin-top:16px;"><div class="card-header"><h3>📋 ' + yearMonth + ' 费用明细</h3></div><div class="card-body"><div class="table-responsive"><table><thead><tr><th>姓名</th><th>部门</th><th>加班时长</th><th>加班费</th><th>请假天数</th><th>请假扣款</th><th>费用合计</th></tr></thead><tbody>' + (detailRows || '<tr><td colspan="7" style="text-align:center;color:var(--text-light);">暂无记录</td></tr>') + '</tbody></table></div></div></div>';
+      '<div class="card" style="margin-top:16px;"><div class="card-header"><h3>📋 ' + this._esc(yearMonth) + ' 费用明细</h3></div><div class="card-body"><div class="table-responsive"><table><thead><tr><th>姓名</th><th>部门</th><th>加班时长</th><th>加班费</th><th>请假天数</th><th>请假扣款</th><th>费用合计</th></tr></thead><tbody>' + (detailRows || '<tr><td colspan="7" style="text-align:center;color:var(--text-light);">暂无记录</td></tr>') + '</tbody></table></div></div></div>';
   },
   forceRecalc() {
+    if (!Auth.canAccessPage('cost')) { App.toast('无权管理费用结算', 'error'); return; }
     var ymEl = document.getElementById('costYm');
     if (ymEl && ymEl.value) Store.deleteSettlementByMonth(ymEl.value);
     Store.refreshRates();

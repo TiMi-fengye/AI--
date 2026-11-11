@@ -2,9 +2,10 @@
  * 华北一部酒仙桥人力资源管理平台 - 主应用逻辑
  */
 const App = {
-  
+
   /** 侧边栏导航配置 - 可调整顺序 */
   _navItems: [
+    { page: "profile", icon: "👤", label: "我的资料" },
     { page: "dashboard", icon: "📊", label: "数据看板" },
     { page: "employees", icon: "👤", label: "人力资源" },
     { page: "attendance", icon: "⏰", label: "考勤管理" },
@@ -48,10 +49,8 @@ const App = {
     nav.innerHTML = "";
     for (var i = 0; i < items.length; i++) {
       var item = items[i];
-      if (user && user.role !== "admin") {
-        var allowed = ["dashboard", "attendance", "leave", "overtime"];
-        if (allowed.indexOf(item.page) < 0) continue;
-      }
+      if (!Auth.canAccessPage(item.page)) continue;
+      if (item.page === 'profile' && !user.employeeId) continue;
       var div = document.createElement("div");
       div.className = "nav-item" + (this.currentPage === item.page ? " active" : "");
       div.dataset.page = item.page;
@@ -63,41 +62,58 @@ const App = {
 
   currentPage: 'dashboard',
 
-  init() {
-    Auth.init();
+  async init() {
+    try {
+    await Auth.init();
     // 未登录时拦截
     if (!Auth.isLoggedIn()) {
       window.location.href = 'login.html';
       return;
     }
-    // 初始化数据结构，并把本机浏览器数据同步到本地服务器；空浏览器自动从服务器恢复。
-    Store.init();
-    var hasLocalEmployees = Store.getEmployees().length > 0;
-    if (hasLocalEmployees) {
-      Store._serverSyncReady = true;
-      Store.syncSnapshotToServer().catch(function() {});
-    } else if (Store.restoreFromServer) {
-      Store.restoreFromServer().then(function(restored) {
-        Store._serverSyncReady = true;
-        if (restored) {
-          App.navigate(App.currentPage || 'dashboard');
-          Auth._updateUI();
-        }
-      });
-    } else {
-      Store._serverSyncReady = true;
+    // 首次迁移只由已验证管理员执行；每次进入均以服务端当前可见范围替换浏览器缓存。
+    const legacy = !localStorage.getItem('personnel_data_owner') ? Store.exportSnapshot() : null;
+    let legacyUsers = {};
+    if (!localStorage.getItem('personnel_data_owner')) { try { legacyUsers = JSON.parse(localStorage.getItem('personnel_users')) || {}; } catch (_) {} }
+    if (legacy && (legacy.employees.length || Object.keys(legacyUsers).length)) {
+      // 未迁移的旧浏览器资料先由本机服务受保护地备份，再清除共享浏览器缓存。
+      await Auth.request('legacy-backup', { method: 'POST', body: JSON.stringify({ snapshot: legacy, users: legacyUsers }) });
     }
-    if (!hasLocalEmployees) {
-      setTimeout(function() {
-        if (Store.getEmployees().length === 0) App.toast('当前访问地址没有人员数据，请检查服务器地址或通过系统管理导入备份', 'warning');
-      }, 900);
+    Store.clearSessionData();
+    await Store.restoreFromServer();
+    Store._serverHydrating = true;
+    try { Store.init(); } finally { Store._serverHydrating = false; }
+    Store._serverSyncReady = true;
+    if (Auth.isAdmin() && legacy && legacy.employees.length && !Store.getEmployees().length) {
+      Store.importSnapshot(legacy);
+      await Store.syncSnapshotToServer();
     }
-    this._bindNav();
+    localStorage.setItem('personnel_data_owner', Auth.currentUser().username);
+    if (Auth.isAdmin() && Object.keys(legacyUsers).length) {
+      const existing = await Auth.loadUsers();
+      for (const username of Object.keys(legacyUsers)) {
+        const old = legacyUsers[username];
+        if (existing[username] || !old.password || old.authType === 'wechat' || old.authType === 'feishu') continue;
+        try { await Auth.saveUser({ username, password: old.password, name: old.name, role: old.role === 'admin' ? 'admin' : 'user', employeeId: old.employeeId }); }
+        catch (_) { App.toast('部分旧账号未迁移，请在权限管理中重新开通', 'warning'); }
+      }
+    }
+    this._renderSidebar();
     this._clock();
-    this.navigate('dashboard');
+    this.navigate(Auth.isAdmin() || Auth.isLeader() ? 'dashboard' : 'profile');
     // 登录后更新界面
     Auth._updateUI();
+    Store.setOperator(Auth.currentUser().name);
+    const intro = document.getElementById('introVideoBtn');
+    if (intro) intro.hidden = !Auth.isAdmin() && !Auth.isLeader();
     this._monthlyReminder();
+    } catch (error) {
+      Store._serverSyncReady = false;
+      const container = document.getElementById('pageContent');
+      container.textContent = '加载失败：' + error.message;
+      const retry = document.createElement('button');
+      retry.className = 'btn btn-primary'; retry.textContent = '重新加载'; retry.onclick = () => this.init();
+      container.appendChild(retry);
+    }
   },
 
   _monthlyReminder() {
@@ -139,32 +155,13 @@ const App = {
 
   /** 绑定导航事件 */
   _bindNav() {
-    document.querySelectorAll('.nav-item').forEach(item => {
-        // 普通用户只显示允许的页面
-        var _user = Auth.currentUser();
-        if (_user && _user.role !== "admin") {
-          var _allowed = ["attendance", "leave", "overtime"];
-          if (_allowed.indexOf(item.dataset.page) < 0) {
-            item.style.display = "none";
-          }
-        }
-        // 普通用户只显示允许的页面
-        var user = Auth.currentUser();
-        if (user && user.role !== "admin") {
-          var allowed = ["dashboard", "attendance", "leave", "overtime"];
-          if (allowed.indexOf(item.dataset.page) < 0) {
-            item.style.display = "none";
-          }
-        }
-      item.addEventListener('click', () => {
-        const page = item.dataset.page;
-        this.navigate(page);
-      });
-    });
+    this._renderSidebar();
   },
 
   /** 实时时钟 */
   _clock() {
+    if (this._clockStarted) return;
+    this._clockStarted = true;
     const el = document.getElementById('currentTime');
     const update = () => {
       const now = new Date();
@@ -310,12 +307,12 @@ const App = {
     App.openModal('账号管理',
       '<div class="auth-menu" style="text-align:center;padding:8px 0 16px;">' +
         '<div style="font-size:48px;margin-bottom:8px;">🔐</div>' +
-        '<h3 style="margin:0;font-size:18px;">' + u.name + '</h3>' +
-        '<p style="font-size:13px;color:var(--text-light);">' + u.username + ' · ' + (u.role === 'admin' ? '管理员' : '普通用户') + '</p>' +
+        '<h3 style="margin:0;font-size:18px;">' + Auth.escape(u.name) + '</h3>' +
+        '<p style="font-size:13px;color:var(--text-light);">' + Auth.escape(u.username) + ' · ' + Auth.roleLabel(u.role) + '</p>' +
       '</div>' +
       '<div style="display:flex;flex-direction:column;gap:8px;">' +
         '<button class="btn btn-outline" onclick="App.closeModal();Auth.showChangePasswordModal()" style="width:100%;">🔑 修改密码</button>' +
-        '<button class="btn btn-outline" onclick="App.closeModal();Auth.showUserManageModal()" style="width:100%;">👥 用户管理</button>' +
+        (Auth.isAdmin() ? '<button class="btn btn-outline" onclick="App.closeModal();Auth.showUserManageModal()" style="width:100%;">👥 用户管理</button>' : '') +
         '<button class="btn btn-danger" onclick="App.closeModal();Auth.logout()" style="width:100%;">🚪 退出登录</button>' +
       '</div>',
       '<button class="btn btn-outline" onclick="App.closeModal()">关闭</button>'
@@ -324,20 +321,12 @@ const App = {
 
   /** 页面导航 */
     navigate(page) {
-    // 权限检查：普通用户只能访问考勤、请假、加班
-    var user = Auth.currentUser();
-    if (user && user.role !== "admin") {
-      var allowed = ["attendance", "leave", "overtime"];
-      if (allowed.indexOf(page) < 0) {
-        App.toast("没有权限访问此页面", "error");
-        return;
-      }
-    }
-this.currentPage = page;
+    if (!Auth.canAccessPage(page)) { App.toast('没有权限访问此页面', 'error'); return; }
+    this.currentPage = page;
 
     // 更新导航状态
     document.querySelectorAll('.nav-item').forEach(item => {
-      item.classList.toggle('active', item.dataset.page === page);
+      item.classList.toggle('active', item.dataset.page === page || (item.dataset.page === 'attendance' && ['leave','overtime','hours'].includes(page)));
     });
 
     // 更新标题
@@ -345,7 +334,11 @@ this.currentPage = page;
       dashboard: '📊 数据看板',
       employees: '👤 人力资源',
       attendance: '⏰ 考勤管理',
-      
+      profile: '👤 我的资料',
+      leave: '📋 请假申请',
+      overtime: '⏰ 加班申请',
+      hours: '⏱️ 我的小时数',
+      performance: '📈 绩效管理',
       cost: '💰 费用结算',
       admin: '⚙️ 系统管理',
       org: '🏢 组织架构',
@@ -355,11 +348,16 @@ this.currentPage = page;
 
     // 渲染对应页面
     const container = document.getElementById('pageContent');
+    container.classList.remove('employees-page');
     switch (page) {
+      case 'profile': SelfProfile.render(container); break;
+      case 'hours': MyHours.render(container); break;
+      case 'leave': Leave.render(container); break;
+      case 'overtime': Overtime.render(container); break;
       case 'dashboard': try{Dashboard.render(container);}catch(e){console.error('Dashboard.render:',e);App.toast('数据看板加载失败','error');} break;
       case 'employees': try{Employees.render(container);}catch(e){console.error('Employees.render:',e);App.toast('人力资源加载失败','error');} break;
       case 'attendance': try{Attendance.render(container);}catch(e){console.error('Attendance.render:',e);App.toast('考勤管理加载失败','error');} break;
-      
+
       case 'cost': try{Cost.render(container);}catch(e){console.error('Cost.render:',e);App.toast('成本管理加载失败','error');} break;
       case 'admin': try{Admin.render(container);}catch(e){console.error('Admin.render:',e);App.toast('系统管理加载失败','error');} break;
       case 'org': try{Org.render(container);}catch(e){console.error('Org.render:',e);App.toast('组织架构加载失败','error');} break;

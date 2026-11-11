@@ -1,336 +1,84 @@
-/**
- * 人员权限分配模块
- * 管理员工与系统账号的绑定、角色分配
- * 每个 Auth 用户可绑定到一名员工（通过 employeeId）
- */
+/** 管理员为账号绑定人员档案，分配角色和楼栋范围。 */
 const Permission = {
-  /** 渲染权限管理页面 */
-  render(container) {
-    if (!Auth.isLoggedIn()) { Auth.renderLoginModal(); return; }
-    var session = Auth.currentUser();
-    if (session.role !== 'admin') { App.toast('仅管理员可管理权限', 'error'); return; }
-
-    var employees = Store.getEmployees();
-    var users = Auth._getUsers();
-    var stats = this._getStats(employees, users);
-
-    container.innerHTML = [
-      '<div style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center;">',
-        '<span style="font-size:16px;font-weight:600;">🔐 人员权限分配</span>',
-        '<button class="btn btn-outline" onclick="Admin.render(document.getElementById(\'pageContent\'))">← 返回设置</button>',
-      '</div>',
-      // 统计卡片
-      '<div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px;">',
-        '<div class="stat-card info"><div class="stat-icon">👤</div><div class="stat-label">总员工</div><div class="stat-value">' + stats.total + '</div></div>',
-        '<div class="stat-card success"><div class="stat-icon">✅</div><div class="stat-label">已开通账号</div><div class="stat-value">' + stats.hasAccount + '</div></div>',
-        '<div class="stat-card primary"><div class="stat-icon">🔑</div><div class="stat-label">管理员</div><div class="stat-value">' + stats.adminCount + '</div></div>',
-        '<div class="stat-card warning"><div class="stat-icon">👥</div><div class="stat-label">普通用户</div><div class="stat-value">' + stats.userCount + '</div></div>',
-      '</div>',
-      // 未绑定账号的 Auth 用户提醒
-      this._renderOrphanUsers(users, employees),
-      // 权限表格
-      '<div class="card"><div class="card-header"><h3>📋 员工权限列表</h3></div><div class="card-body">',
-        employees.length > 0 ? this._renderTable(employees, users) : '<div class="empty-state"><div class="empty-icon">👤</div><p>暂无员工数据，请先添加人员</p></div>',
-      '</div></div>',
-      // 说明
-      this._renderHelp(),
-    ].join('');
-  },
-
-  /** 渲染未绑定员工的 Auth 用户提醒 */
-  _renderOrphanUsers(users, employees) {
-    var boundIds = {};
-    Object.keys(users).forEach(function(u) {
-      if (users[u].employeeId) boundIds[users[u].employeeId] = true;
-    });
-    var orphanUsers = Object.keys(users).filter(function(u) {
-      return !users[u].employeeId && u !== 'admin';
-    });
-    if (orphanUsers.length === 0) return '';
-
-    return [
-      '<div class="card" style="border-left:4px solid var(--warning);margin-bottom:16px;">',
-        '<div class="card-body" style="padding:12px 16px;">',
-          '<div style="font-size:13px;color:var(--warning);font-weight:600;margin-bottom:6px;">⚠️ 以下系统账号未绑定到员工</div>',
-          '<div style="display:flex;flex-wrap:wrap;gap:6px;">',
-            orphanUsers.map(function(u) {
-              var roleLabel = users[u].role === 'admin' ? '管理员' : '普通用户';
-              return '<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:#fef3c7;border-radius:6px;font-size:12px;">' +
-                u + ' (' + (users[u].name || u) + ') <span class="tag tag-info" style="font-size:10px;">' + roleLabel + '</span>' +
-                ' <span style="cursor:pointer;color:var(--primary);margin-left:4px;" onclick="Permission.showBindModal(\'' + u + '\')">📎 绑定</span>' +
-                '</span>';
-            }).join(''),
-          '</div>',
-        '</div>',
-      '</div>'
-    ].join('');
-  },
-
-  /** 统计 */
-  _getStats(employees, users) {
-    var boundIds = {};
-    Object.keys(users).forEach(function(u) {
-      if (users[u].employeeId) boundIds[users[u].employeeId] = true;
-    });
-    var total = employees.length;
-    var hasAccount = 0, adminCount = 0, userCount = 0;
-    Object.keys(users).forEach(function(u) {
-      if (u === 'admin') { adminCount++; return; }
-      if (users[u].role === 'admin') adminCount++;
-      else userCount++;
-      if (users[u].employeeId) hasAccount++;
-    });
-    return { total: total, hasAccount: hasAccount, adminCount: adminCount, userCount: userCount };
-  },
-
-  /** 渲染权限表格 */
-  _renderTable(employees, users) {
-    // 构建 employeeId -> auth user 的映射
-    var userMap = {};
-    Object.keys(users).forEach(function(u) {
-      var empId = users[u].employeeId;
-      if (empId) userMap[empId] = { username: u, name: users[u].name, role: users[u].role };
-    });
-
-    var html = '<div class="table-responsive"><table><thead><tr>' +
-      '<th>员工姓名</th><th>部门</th><th>职位</th><th>系统账号</th><th>角色</th><th>操作</th>' +
-      '</tr></thead><tbody>';
-
-    for (var i = 0; i < employees.length; i++) {
-      var emp = employees[i];
-      var auth = userMap[emp.id];
-      var username = auth ? auth.username : '';
-      var role = auth ? auth.role : '';
-      var roleLabel = role === 'admin' ? '管理员' : (role === 'user' ? '普通用户' : '未开通');
-      var roleClass = role === 'admin' ? 'tag-primary' : (role === 'user' ? 'tag-info' : 'tag-warning');
-
-      html += '<tr>' +
-        '<td><strong>' + emp.name + '</strong></td>' +
-        '<td>' + (emp.department || '-') + '</td>' +
-        '<td>' + (emp.position || '-') + '</td>' +
-        '<td>' + (auth ? '<code style="font-size:12px;">' + username + '</code>' : '<span style="color:var(--text-light);font-size:12px;">未分配</span>') + '</td>' +
-        '<td><span class="tag ' + roleClass + '" style="font-size:11px;">' + roleLabel + '</span></td>' +
-        '<td style="white-space:nowrap;">' +
-          (auth ? [
-            '<button class="btn btn-info btn-sm" onclick="Permission.showEditRoleModal(' + emp.id + ')" title="修改角色">🔑 角色</button> ',
-            '<button class="btn btn-outline btn-sm" onclick="Permission.showBindModal(\'' + username + '\')" title="重新绑定">📎 绑定</button> ',
-            '<button class="btn btn-danger btn-sm" onclick="Permission.unbindAccount(' + emp.id + ',\'' + username + '\')" title="解除绑定">解除</button>'
-          ].join('') : [
-            '<button class="btn btn-success btn-sm" onclick="Permission.showCreateModal(' + emp.id + ')">+ 创建账号</button> ',
-            '<button class="btn btn-outline btn-sm" onclick="Permission.showBindToExistingModal(' + emp.id + ')">📎 绑定已有</button>'
-          ].join('')) +
-        '</td></tr>';
-    }
-
-    html += '</tbody></table></div>';
-    return html;
-  },
-
-  /** 显示帮助信息 */
-  _renderHelp() {
-    return [
-      '<div class="card" style="background:#f8fafc;border:1px dashed var(--border);">',
-        '<div class="card-body" style="padding:12px 16px;font-size:12px;color:var(--text-light);">',
-          '💡 <strong>说明：</strong>',
-          '系统账号与员工是分开管理的。在此页面可以将员工与系统账号绑定，从而控制员工登录系统后的权限。',
-          '普通用户只能查看考勤、请假、加班页面并提交申请；管理员可以管理所有功能。',
-        '</div>',
-      '</div>'
-    ].join('');
-  },
-
-  /** 打开创建账号弹窗 */
-  showCreateModal(employeeId) {
-    var emp = Store.getEmployees().find(function(e) { return e.id === employeeId; });
-    if (!emp) return;
-
-    App.openModal('创建系统账号 - ' + emp.name,
-      '<div class="form-group"><label>登录账号 *</label><input type="text" class="form-control" id="permNewUsername" placeholder="请输入登录账号" value="' + (emp.name||'').toLowerCase() + '"></div>' +
-      '<div class="form-group"><label>显示名称</label><input type="text" class="form-control" id="permNewDisplayName" value="' + emp.name + '" disabled style="background:#f1f5f9;"></div>' +
-      '<div class="form-group"><label>密码 *</label><input type="password" class="form-control" id="permNewPassword" placeholder="请设置至少12位密码"></div>' +
-      '<div class="form-group"><label>角色</label><select class="form-control" id="permNewRole"><option value="user">普通用户</option><option value="admin">管理员</option></select></div>' +
-      '<input type="hidden" id="permEmployeeId" value="' + employeeId + '">' +
-      '<p style="font-size:12px;color:var(--text-light);margin-top:8px;">将为此员工创建系统登录账号，绑定后该员工可使用账号登录系统。</p>',
-      '<button class="btn btn-primary" onclick="Permission.saveCreateAccount()">创建账号</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>'
-    );
-  },
-
-  /** 保存创建账号 */
-  saveCreateAccount() {
-    var username = document.getElementById('permNewUsername').value.trim();
-    var password = document.getElementById('permNewPassword').value.trim();
-    var role = document.getElementById('permNewRole').value;
-    var employeeId = parseInt(document.getElementById('permEmployeeId').value);
-    var emp = Store.getEmployees().find(function(e) { return e.id === employeeId; });
-    if (!emp) { App.toast('员工不存在', 'error'); return; }
-    if (!username) { App.toast('请输入登录账号', 'error'); return; }
-    if (!password || password.length < 6) { App.toast('密码至少6λ', 'error'); return; }
-
-    var users = Auth._getUsers();
-    if (users[username]) { App.toast('账号 ' + username + ' 已存在', 'error'); return; }
-
-    users[username] = {
-      password: password,
-      name: emp.name,
-      role: role,
-      employeeId: employeeId,
-      createdAt: new Date().toISOString()
-    };
-    Auth._saveUsers(users);
-    App.toast('账号 ' + username + ' 已创建并绑定到 ' + emp.name, 'success');
-    App.closeModal();
-    App.navigate('admin');
-    // 切换到权限管理
-    Permission.render(document.getElementById('pageContent'));
-  },
-
-  /** 打开绑定已有账号弹窗 */
-  showBindToExistingModal(employeeId) {
-    var emp = Store.getEmployees().find(function(e) { return e.id === employeeId; });
-    if (!emp) return;
-    var users = Auth._getUsers();
-
-    // 过滤出未绑定的账号（排除已绑定到其他员工的）
-    var unboundUsers = Object.keys(users).filter(function(u) {
-      return !users[u].employeeId || u === 'admin';
-    });
-
-    if (unboundUsers.length === 0) {
-      App.toast('没有可绑定的未关联账号，请先创建', 'warning');
-      return;
-    }
-
-    App.openModal('绑定已有账号 - ' + emp.name,
-      '<div class="form-group"><label>选择系统账号</label><select class="form-control" id="permBindUsername">' +
-        unboundUsers.map(function(u) {
-          var roleLabel = users[u].role === 'admin' ? '管理员' : '普通用户';
-          return '<option value="' + u + '">' + u + ' (' + (users[u].name || u) + ') - ' + roleLabel + '</option>';
+  async render(container) {
+    if (!Auth.isAdmin()) { App.toast('仅管理员可管理权限', 'error'); return; }
+    App.currentPage = 'admin';
+    document.getElementById('pageTitle').textContent = '🔐 账号与人员权限';
+    container.textContent = '正在读取账号…';
+    try {
+      const users = await Auth.loadUsers();
+      const employees = Store.getEmployees();
+      const e = Auth.escape;
+      container.innerHTML =
+        '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;"><button class="btn btn-primary" id="permAdd">添加账号</button><button class="btn btn-outline" onclick="App.navigate(\'admin\')">返回设置</button></div>' +
+        '<div class="card"><div class="card-header"><h3>账号与人员权限</h3></div><div class="card-body"><div class="table-responsive"><table><thead><tr><th>姓名</th><th>登录账号</th><th>角色</th><th>关联人员</th><th>负责楼栋</th><th>操作</th></tr></thead><tbody>' +
+        Object.keys(users).map(username => {
+          const user = users[username];
+          const employee = employees.find(emp => String(emp.id) === String(user.employeeId));
+          return '<tr><td>' + e(user.name) + '</td><td>' + e(username) + '</td><td>' + Auth.roleLabel(user.role) + '</td><td>' + (employee ? e(employee.name) + '（' + e(employee.phone || '') + '）' : '未绑定') + '</td><td>' + e((user.buildings || []).join('、') || '—') + '</td><td><button class="btn btn-outline btn-sm" data-edit="' + e(username) + '">编辑权限</button> ' + (username !== 'admin' && username !== Auth.currentUser().username ? '<button class="btn btn-danger btn-sm" data-delete="' + e(username) + '">删除账号</button>' : '') + '</td></tr>';
         }).join('') +
-      '</select></div>' +
-      '<p style="font-size:12px;color:var(--text-light);margin-top:8px;">将员工 <strong>' + emp.name + '</strong> 绑定到选中的系统账号。</p>',
-      '<button class="btn btn-primary" onclick="Permission.saveBindExisting(' + employeeId + ')">确认绑定</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>'
-    );
+        '</tbody></table></div></div></div>' +
+        '<p style="margin-top:16px;color:var(--text-light);line-height:1.9;">管理员可查看全部信息。楼长只可查看和维护指定楼栋的信息。普通人员只可维护自己绑定的档案、提交自己的加班和请假申请、查看自己的小时数。手机号注册的账号自动绑定个人档案；楼长身份由管理员分配。</p>';
+      container.querySelector('#permAdd').onclick = () => this.showEditModal();
+      container.querySelectorAll('[data-edit]').forEach(button => { button.onclick = () => this.showEditModal(button.dataset.edit); });
+      container.querySelectorAll('[data-delete]').forEach(button => { button.onclick = () => this.deleteAccount(button.dataset.delete); });
+    } catch (error) { container.textContent = '读取失败：' + error.message; }
   },
 
-  /** 保存绑定已有账号 */
-  saveBindExisting(employeeId) {
-    var username = document.getElementById('permBindUsername').value;
-    var users = Auth._getUsers();
-    if (!users[username]) { App.toast('账号不存在', 'error'); return; }
-
-    // 检查是否已被其他员工绑定
-    for (var u in users) {
-      if (users[u].employeeId === employeeId && u !== username) {
-        App.toast('该员工已绑定到其他账号：' + u, 'error');
-        return;
-      }
-    }
-
-    users[username].employeeId = employeeId;
-    Auth._saveUsers(users);
-    App.toast('账号 ' + username + ' 已绑定到员工', 'success');
-    App.closeModal();
-    Permission.render(document.getElementById('pageContent'));
+  showEditModal(username) {
+    if (!Auth.isAdmin()) return;
+    const user = (username && Auth._getUsers()[username]) || { role: 'user', buildings: [] };
+    const e = Auth.escape;
+    const employees = Store.getEmployees();
+    const buildings = [...new Set(employees.map(emp => emp.building).filter(Boolean).concat(typeof Employees === 'undefined' ? [] : Employees._buildingOptions))];
+    App.openModal(username ? '编辑账号权限' : '添加账号',
+      '<div class="form-group"><label>手机号 / 管理账号 *</label><input class="form-control" id="permUsername" value="' + e(username || '') + '"' + (username ? ' readonly' : '') + ' autocomplete="off"></div>' +
+      '<div class="form-group"><label>姓名 *</label><input class="form-control" id="permName" value="' + e(user.name || '') + '"></div>' +
+      '<div class="form-group"><label>密码' + (username ? '（留空保留）' : ' *') + '</label><input type="password" class="form-control" id="permPassword" autocomplete="new-password" placeholder="普通人员/楼长至少8位，管理员至少12位"' + (username === Auth.currentUser().username ? ' disabled' : '') + '>' + (username === Auth.currentUser().username ? '<p>修改本人密码请使用右上角“账号 → 修改密码”。</p>' : '') + '</div>' +
+      '<div class="form-group"><label>关联人员档案</label><select class="form-control" id="permEmployee"><option value="">未绑定</option>' +
+      employees.map(emp => '<option value="' + e(emp.id) + '"' + (String(emp.id) === String(user.employeeId) ? ' selected' : '') + '>' + e(emp.name + ' · ' + (emp.phone || '') + ' · ' + (emp.building || '楼栋未填写')) + '</option>').join('') + '</select></div>' +
+      '<div class="form-group"><label>角色</label><select class="form-control" id="permRole">' +
+      ['user', 'leader', 'admin'].map(role => '<option value="' + role + '"' + (role === user.role ? ' selected' : '') + '>' + Auth.roleLabel(role) + '</option>').join('') + '</select></div>' +
+      '<div class="form-group" id="permBuildingsGroup"><label>负责楼栋（楼长必填，多个用逗号分隔）</label><input class="form-control" id="permBuildings" list="permBuildingOptions" value="' + e((user.buildings || []).join('，')) + '"><datalist id="permBuildingOptions">' + buildings.map(building => '<option value="' + e(building) + '"></option>').join('') + '</datalist><p style="font-size:12px;color:var(--text-light);margin-top:6px;">按此处明确分配的楼栋授权，人员表单中的岗位名称不会授予楼长权限。</p></div>',
+      '<button class="btn btn-primary" id="permSave">保存</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>');
+    const roleSelect = document.getElementById('permRole');
+    const toggle = () => { document.getElementById('permBuildingsGroup').hidden = roleSelect.value !== 'leader'; };
+    roleSelect.onchange = toggle; toggle();
+    document.getElementById('permSave').onclick = () => this.saveAccount(!!username);
   },
 
-  /** 显示修改角色弹窗 */
-  showEditRoleModal(employeeId) {
-    var emp = Store.getEmployees().find(function(e) { return e.id === employeeId; });
-    if (!emp) return;
-    var users = Auth._getUsers();
-    var targetUser = null, targetUsername = '';
-    for (var u in users) {
-      if (users[u].employeeId === employeeId) {
-        targetUser = users[u];
-        targetUsername = u;
-        break;
-      }
-    }
-    if (!targetUser) { App.toast('该员工未绑定账号', 'error'); return; }
-
-    App.openModal('修改权限 - ' + emp.name,
-      '<div style="margin-bottom:16px;">' +
-        '<div style="font-size:13px;color:var(--text-light);margin-bottom:8px;">系统账号：<code>' + targetUsername + '</code></div>' +
-        '<div class="form-group"><label>角色</label>' +
-          '<select class="form-control" id="permEditRole">' +
-            '<option value="user"' + (targetUser.role === 'user' ? ' selected' : '') + '>普通用户</option>' +
-            '<option value="admin"' + (targetUser.role === 'admin' ? ' selected' : '') + '>管理员</option>' +
-          '</select></div>' +
-        '<div class="form-group"><label>新密码（留空不修改）</label>' +
-          '<input type="password" class="form-control" id="permEditPassword" placeholder="留空则保留原密码"></div>' +
-      '</div>',
-      '<button class="btn btn-primary" onclick="Permission.saveEditRole(' + employeeId + ')">保存</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>'
-    );
+  async saveAccount(isEdit) {
+    if (!Auth.isAdmin()) return;
+    const username = document.getElementById('permUsername').value.trim();
+    const name = document.getElementById('permName').value.trim();
+    const password = document.getElementById('permPassword').value;
+    const role = document.getElementById('permRole').value;
+    const employeeId = Number(document.getElementById('permEmployee').value) || null;
+    const buildings = role === 'leader' ? [...new Set(document.getElementById('permBuildings').value.split(/[,，、;\n]/).map(item => item.trim()).filter(Boolean))] : [];
+    if (!username || !name) return App.toast('请填写账号和姓名', 'error');
+    const minimum = role === 'admin' ? 12 : 8;
+    if ((!isEdit || password) && password.length < minimum) return App.toast('密码至少' + minimum + '位', 'error');
+    if (role === 'leader' && !buildings.length) return App.toast('请填写楼长负责的楼栋', 'error');
+    const body = { username, name, role, employeeId, buildings };
+    if (password) body.password = password;
+    if (/^1[3-9]\d{9}$/.test(username)) body.phone = username;
+    const button = document.getElementById('permSave'); button.disabled = true;
+    try {
+      await Store.flushServerSync();
+      await Auth.saveUser(body);
+      App.closeModal();
+      App.toast('账号权限已保存', 'success');
+      this.render(document.getElementById('pageContent'));
+    } catch (error) { App.toast(error.message, 'error'); }
+    finally { button.disabled = false; }
   },
 
-  /** 保存角色修改 */
-  saveEditRole(employeeId) {
-    var role = document.getElementById('permEditRole').value;
-    var newPassword = document.getElementById('permEditPassword').value.trim();
-    var users = Auth._getUsers();
-    var targetUsername = null;
-    for (var u in users) {
-      if (users[u].employeeId === employeeId) {
-        targetUsername = u;
-        break;
-      }
-    }
-    if (!targetUsername) { App.toast('未找到关联账号', 'error'); return; }
-    if (targetUsername === 'admin') { App.toast('不能修改默认管理员', 'error'); return; }
-
-    users[targetUsername].role = role;
-    if (newPassword) {
-      if (newPassword.length < 6) { App.toast('密码至少6λ', 'error'); return; }
-      users[targetUsername].password = newPassword;
-    }
-    Auth._saveUsers(users);
-    App.toast('权限已更新', 'success');
-    App.closeModal();
-    Permission.render(document.getElementById('pageContent'));
-  },
-
-  /** 显示绑定弹窗（给未绑定员工的账号绑定到员工） */
-  showBindModal(username) {
-    var users = Auth._getUsers();
-    var user = users[username];
-    if (!user) return;
-    var employees = Store.getEmployees();
-
-    App.openModal('绑定员工 - ' + username,
-      '<div class="form-group"><label>选择员工</label>' +
-        '<select class="form-control" id="permBindEmployee">' +
-          '<option value="">-- 请选择 --</option>' +
-          employees.map(function(e) {
-            return '<option value="' + e.id + '">' + e.name + ' (' + (e.department || '-') + ')</option>';
-          }).join('') +
-        '</select></div>' +
-        '<p style="font-size:12px;color:var(--text-light);margin-top:8px;">将账号 <code>' + username + '</code> 绑定到选中的员工。</p>',
-      '<button class="btn btn-primary" onclick="Permission.saveBindToEmployee(\'' + username + '\')">确认绑定</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>'
-    );
-  },
-
-  /** 保存账号绑定到员工 */
-  saveBindToEmployee(username) {
-    var employeeId = parseInt(document.getElementById('permBindEmployee').value);
-    if (!employeeId) { App.toast('请选择员工', 'error'); return; }
-    var users = Auth._getUsers();
-    if (!users[username]) { App.toast('账号不存在', 'error'); return; }
-    users[username].employeeId = employeeId;
-    Auth._saveUsers(users);
-    App.toast('已绑定', 'success');
-    App.closeModal();
-    Permission.render(document.getElementById('pageContent'));
-  },
-
-  /** 解除绑定 */
-  unbindAccount(employeeId, username) {
-    if (!App.confirm('确定解除 ' + username + ' 与员工的绑定？\n\n解除后该账号仍可登录，但不再关联到具体员工。')) return;
-    var users = Auth._getUsers();
-    if (!users[username]) { App.toast('账号不存在', 'error'); return; }
-    if (username === 'admin') { App.toast('不能解绑默认管理员', 'error'); return; }
-    delete users[username].employeeId;
-    Auth._saveUsers(users);
-    App.toast('已解除绑定', 'info');
-    Permission.render(document.getElementById('pageContent'));
-  },
+  async deleteAccount(username) {
+    if (!Auth.isAdmin() || !App.confirm('确定删除账号“' + username + '”？人员档案会保留。')) return;
+    try {
+      await Auth.deleteUser(username);
+      App.toast('账号已删除', 'success');
+      this.render(document.getElementById('pageContent'));
+    } catch (error) { App.toast(error.message, 'error'); }
+  }
 };

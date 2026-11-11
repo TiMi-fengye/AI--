@@ -5,6 +5,12 @@ const Store = {
   _serverSyncTimer: null,
   _serverSyncReady: false,
   _serverHydrating: false,
+  _syncPromise: null,
+  _writeVersion: 0,
+  _syncedVersion: 0,
+  _lastServerSnapshot: null,
+  _data: Object.create(null),
+  _memoryOnly: false,
 
   init() {
     const list = this.getEmployees();
@@ -26,10 +32,6 @@ const Store = {
       var _e = _emps[_i];
       if (!_e.region) { _e.region = "区域A"; _changed = true; }
       if (!_e.room) { _e.room = "机房A"; _changed = true; }
-      if (!_e.building) { _e.building = "楼栋A"; _changed = true; }
-      if (!_e.status) { _e.status = "在职"; _changed = true; }
-      if (!_e.personAttribute) { _e.personAttribute = "属性A"; _changed = true; }
-      if (!_e.workAttribute) { _e.workAttribute = "标准班次"; _changed = true; }
       // 飞书绑定已停用，删除遗留身份字段，保留人员业务资料。
       ["feishuOpenId", "feishuUserId", "feishuUnionId"].forEach(function (field) {
         if (Object.prototype.hasOwnProperty.call(_e, field)) { delete _e[field]; _changed = true; }
@@ -44,14 +46,19 @@ const Store = {
     this._updateStats();
   },
 
-  get(key) { try { const raw = localStorage.getItem(this._namespace + key); return raw ? JSON.parse(raw) : null; } catch(e) { return null; } },
+  get(key) {
+    if (this._memoryOnly && this._isServerDataKey(key)) return this._data[key] == null ? null : JSON.parse(JSON.stringify(this._data[key]));
+    try { const raw = localStorage.getItem(this._namespace + key); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
+  },
   set(key, value) {
-    try { localStorage.setItem(this._namespace + key, JSON.stringify(value)); } catch(e) {}
-    if (this._serverSyncReady && !this._serverHydrating && this._isServerDataKey(key)) this._queueServerSync();
+    if (this._memoryOnly && this._isServerDataKey(key)) this._data[key] = JSON.parse(JSON.stringify(value));
+    else localStorage.setItem(this._namespace + key, JSON.stringify(value));
+    if (this._serverSyncReady && !this._serverHydrating && this._isServerDataKey(key)) { this._writeVersion++; this._queueServerSync(); }
   },
   remove(key) {
-    localStorage.removeItem(this._namespace + key);
-    if (this._serverSyncReady && !this._serverHydrating && this._isServerDataKey(key)) this._queueServerSync();
+    if (this._memoryOnly && this._isServerDataKey(key)) delete this._data[key];
+    else localStorage.removeItem(this._namespace + key);
+    if (this._serverSyncReady && !this._serverHydrating && this._isServerDataKey(key)) { this._writeVersion++; this._queueServerSync(); }
   },
 
   _isServerDataKey(key) {
@@ -64,38 +71,75 @@ const Store = {
     if (this._serverSyncTimer) clearTimeout(this._serverSyncTimer);
     this._serverSyncTimer = setTimeout(function() {
       self._serverSyncTimer = null;
-      self.syncSnapshotToServer().catch(function() {});
+      self.flushServerSync().catch(function(error) { if (typeof App !== 'undefined') App.toast(error.message, 'error'); });
     }, 700);
   },
 
-  syncSnapshotToServer() {
-    if (typeof fetch !== "function") return Promise.resolve(false);
-    var snapshot = this.exportSnapshot();
-    return fetch("/api/data/snapshot.json", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(snapshot)
-    }).then(function(r) {
-      if (!r.ok) throw new Error("服务器数据同步失败");
-      return r.json().then(function(d) {
-        if (d && d.status === "error") throw new Error("服务器数据同步失败");
+  syncSnapshotToServer() { this._writeVersion++; return this.flushServerSync(); },
+
+  async flushServerSync() {
+    if (!this._serverSyncReady) throw new Error('数据尚未加载完成，请稍后重试');
+    if (this._serverSyncTimer) { clearTimeout(this._serverSyncTimer); this._serverSyncTimer = null; }
+    if (this._syncPromise) return this._syncPromise;
+    if (this._syncedVersion >= this._writeVersion) return true;
+    this._syncPromise = (async () => {
+      try {
+        while (this._syncedVersion < this._writeVersion) {
+          const version = this._writeVersion;
+          const snapshot = this.exportSnapshot();
+          const response = await fetch('/api/data/snapshot.json', {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot)
+          });
+          const data = await response.json();
+          if (!response.ok || data.ok === false || data.status === 'error') throw new Error(data.message || '保存失败，请重试');
+          if (data.user && typeof Auth !== 'undefined') { Auth._user = data.user; Auth._updateUI(); }
+          this._lastServerSnapshot = snapshot;
+          if (data.revision != null) this._revision = data.revision;
+          this._syncedVersion = version;
+        }
         return true;
-      });
-    });
+      } catch (error) {
+        // 撤回被服务器拒绝的乐观更新，避免重试时重复提交申请。
+        try { await this.restoreFromServer(); } catch (_) {
+          if (this._lastServerSnapshot) this._hydrate(this._lastServerSnapshot);
+        }
+        this._syncedVersion = this._writeVersion;
+        throw error;
+      } finally { this._syncPromise = null; }
+    })();
+    return this._syncPromise;
   },
 
-  restoreFromServer() {
-    var self = this;
-    if (typeof fetch !== "function") return Promise.resolve(false);
-    return fetch("/api/data/snapshot.json", { cache: "no-store" }).then(function(r) {
-      if (!r.ok) throw new Error("服务器数据读取失败");
-      return r.json();
-    }).then(function(payload) {
-      var snapshot = payload && payload.data === null ? null : payload;
-      if (!snapshot || !Array.isArray(snapshot.employees) || snapshot.employees.length === 0 || self.getEmployees().length > 0) return false;
-      self._serverHydrating = true;
-      try { self.importSnapshot(snapshot); self.set("initialized", true); } finally { self._serverHydrating = false; }
-      return true;
-    }).catch(function() { return false; });
+  _hydrate(snapshot) {
+    this._serverHydrating = true;
+    try { this.importSnapshot(snapshot); this.set('initialized', true); }
+    finally { this._serverHydrating = false; }
+  },
+  async restoreFromServer() {
+    const response = await fetch('/api/data/snapshot.json', { cache: 'no-store', credentials: 'same-origin' });
+    const payload = await response.json();
+    if (!response.ok || payload.ok === false) throw new Error(payload.message || '服务器数据读取失败');
+    const snapshot = payload && Array.isArray(payload.employees) ? payload : { employees: [] };
+    this._hydrate(snapshot);
+    this._lastServerSnapshot = snapshot;
+    this._revision = snapshot.revision;
+    return true;
+  },
+  clearSessionData() {
+    this._serverSyncReady = false;
+    if (this._serverSyncTimer) clearTimeout(this._serverSyncTimer);
+    this._serverSyncTimer = null;
+    this._writeVersion = this._syncedVersion = 0;
+    this._lastServerSnapshot = null;
+    this._data = Object.create(null);
+    this._memoryOnly = true;
+    if (typeof AI !== 'undefined') AI.messages = [];
+    Object.keys(localStorage).filter(key => key.startsWith(this._namespace)).forEach(key => localStorage.removeItem(key));
+    localStorage.removeItem(this._performanceKey);
+    localStorage.removeItem('personnel_users');
+    localStorage.removeItem('personnel_data_owner');
+    sessionStorage.removeItem('personnel_auth_session');
   },
 
   /* ===== 员工数据 ===== */
@@ -105,17 +149,15 @@ const Store = {
   /* ===== 操作人 ===== */
   getEmployees() { return this.get("employees") || []; },
 
+  _nextId(rows) { return rows.reduce(function(id, row) { return Math.max(id, Number(row.id || 0) + 1); }, Date.now()); },
+
   addEmployee(emp) {
     var es = this.getEmployees();
-    emp.id = es.length > 0 ? Math.max.apply(null, es.map(function(e){return e.id||0;})) + 1 : 1;
+    emp.id = this._nextId(es);
     emp.createdAt = new Date().toISOString();
     if (!emp.region) emp.region = "区域A";
     if (!emp.room) emp.room = "机房A";
-    if (!emp.building) emp.building = "楼栋A";
-    if (!emp.status) emp.status = "在职";
     if (!emp.gender) emp.gender = "男";
-    if (!emp.personAttribute) emp.personAttribute = "属性A";
-    if (!emp.workAttribute) emp.workAttribute = "标准班次";
     if (!emp.joinDate) emp.joinDate = new Date().toISOString().split("T")[0];
     es.push(emp);
     this.set("employees", es);
@@ -215,7 +257,7 @@ const Store = {
 
   /* 数据处理 */
   getAttendance() { return this.get("attendance") || []; },
-  addAttendance(r) { var a = this.getAttendance(); r.id = Date.now(); a.push(r); this.set("attendance", a); this._updateStats(); return r; },
+  addAttendance(r) { var a = this.getAttendance(); r.id = this._nextId(a); a.push(r); this.set("attendance", a); this._updateStats(); return r; },
   updateAttendance(id, d) { var a = this.getAttendance(); for(var i=0;i<a.length;i++){if(a[i].id===id){a[i]=Object.assign({},a[i],d);this.set("attendance",a);return a[i];}} return null; },
   deleteAttendance(id) { this.set("attendance", this.getAttendance().filter(function(a){return a.id!==id;})); this._updateStats(); },
 
@@ -257,7 +299,7 @@ const Store = {
 
   addLeaveRequest(l) {
     var lv = this.getLeaveRequests();
-    l.id = Date.now();
+    l.id = this._nextId(lv);
     l.createdAt = new Date().toISOString();
     l.status = l.status || "pending";
     if (this.isCompensatoryLeave(l)) l.hours = parseFloat(l.hours) || 0;
@@ -310,7 +352,7 @@ const Store = {
 
   addOvertime(r) {
     var ot = this.getOvertime();
-    r.id = Date.now();
+    r.id = this._nextId(ot);
     r.createdAt = new Date().toISOString();
     r.status = r.status || "pending";
     r.overtimeType = r.overtimeType === "compensatory" ? "compensatory" : "fee";
@@ -377,7 +419,7 @@ const Store = {
   addDepartment(d) { var depts = this.getDepartments(); if(depts.indexOf(d)<0){depts.push(d);this.set("departments",depts);} },
   getOrgStructure() { return this.get("org_structure") || {id:1,name:"示例组织",type:"company",children:[]}; },
   saveOrgStructure(t) { this.set("org_structure", t); },
-  getOrgEmployeeCounts() { var c={};this.getEmployees().forEach(function(e){if(e.department)c[e.department]=(c[e.department]||0)+1;});return c; },
+  getOrgEmployeeCounts() { var c=Object.create(null);this.getEmployees().forEach(function(e){if(e.department)c[e.department]=(c[e.department]||0)+1;});return c; },
   getEmployeesByDepartment(d){return this.getEmployees().filter(function(e){return e.department===d;});},
   _findNodeById(t,i){if(t.id===i)return t;if(t.children){for(var j=0;j<t.children.length;j++){var f=this._findNodeById(t.children[j],i);if(f)return f;}}return null;},
   _findParent(t,i){if(!t.children)return null;for(var j=0;j<t.children.length;j++){if(t.children[j].id===i)return t;var f=this._findParent(t.children[j],i);if(f)return f;}return null;},
@@ -488,7 +530,7 @@ const Store = {
   /* ===== 婢跺洣鍞?/ 閺夆晜锚鐢?===== */
   exportSnapshot() {
     var performance = [];
-    try { performance = JSON.parse(localStorage.getItem(this._performanceKey)) || []; } catch(e) {}
+    try { performance = this.get(this._performanceKey) || JSON.parse(localStorage.getItem(this._performanceKey)) || []; } catch(e) {}
     return {
       employees: this.getEmployees(),
       attendance: this.getAttendance(),
@@ -496,10 +538,11 @@ const Store = {
       overtime: this.getOvertime(),
       settlements: this.getSettlements(),
       departments: this.getDepartments(),
-  getOrgStructure() { return this.get("org_structure") || {id:1,name:"示例组织",type:"company",children:[]}; },
+      orgStructure: this.getOrgStructure(),
       updateLogs: this.getUpdateLogs(),
       performance: performance,
-      exportedAt: new Date().toISOString()
+      exportedAt: new Date().toISOString(),
+      revision: this._revision
     };
   },
 
@@ -510,10 +553,10 @@ const Store = {
     this.set("leave_requests", Array.isArray(d.leaveRequests) ? d.leaveRequests : []);
     this.set("overtime", Array.isArray(d.overtime) ? d.overtime : []);
     this.set("settlements", Array.isArray(d.settlements) ? d.settlements : []);
-    this.set("departments", Array.isArray(d.departments) && d.departments.length ? d.departments : ["部门A", "部门B"]);
-    if (d.orgStructure) this.set("org_structure", d.orgStructure);
-    if (Array.isArray(d.updateLogs)) this.set("update_logs", d.updateLogs);
-    if (Array.isArray(d.performance)) this.set(this._performanceKey, d.performance);
+    this.set("departments", Array.isArray(d.departments) ? d.departments : []);
+    this.set("org_structure", d.orgStructure || { id: 1, name: '组织', type: 'company', children: [] });
+    this.set("update_logs", Array.isArray(d.updateLogs) ? d.updateLogs : []);
+    this.set(this._performanceKey, Array.isArray(d.performance) ? d.performance : []);
     this._updateStats();
     return true;
   },

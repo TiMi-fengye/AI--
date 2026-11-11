@@ -43,21 +43,15 @@ const Employees = {
 
   /** 当前用户负责的楼栋 */
   _leaderBuildings() {
-    var name = this._currentUserName();
-    if (!name) return [];
-    return this._buildingLeaders
-      .filter(function (item) { return item.leaders.indexOf(name) >= 0; })
-      .map(function (item) { return item.building; });
+    return Auth.leaderBuildings();
   },
 
-  _isFloorLeader() { return this._leaderBuildings().length > 0; },
+  _isFloorLeader() { return Auth.isLeader(); },
 
   /** 当前用户可见的人员（楼长只看本楼栋） */
   _visibleEmployees() {
     var all = Store.getEmployees();
-    var buildings = this._leaderBuildings();
-    if (buildings.length === 0) return all;
-    return all.filter(function (e) { return buildings.indexOf(e.building || "") >= 0; });
+    return all.filter(function (e) { return Auth.canAccessEmployee(e.id); });
   },
 
   _escape(v) {
@@ -83,6 +77,7 @@ const Employees = {
   },
 
   render(container) {
+    if (!Auth.isAdmin() && !Auth.isLeader()) { App.navigate('profile'); return; }
     container.classList.add('employees-page');
     var self = this;
     var employees = this._visibleEmployees();
@@ -126,7 +121,7 @@ const Employees = {
       // 摘要
       '<div class="emp-stats" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px;">',
         '<div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.06);"><span style="color:#64748b;font-size:12px;">总人数</span><strong style="font-size:24px;line-height:1;">' + employees.length + '</strong></div>',
-        '<div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.06);"><span style="color:#64748b;font-size:12px;">在职</span><strong style="font-size:24px;line-height:1;color:#059669;">' + employees.filter(function (e) { return e.status !== '离职'; }).length + '</strong></div>',
+        '<div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.06);"><span style="color:#64748b;font-size:12px;">在职</span><strong style="font-size:24px;line-height:1;color:#059669;">' + employees.filter(function (e) { return e.status === '在职'; }).length + '</strong></div>',
         '<div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.06);"><span style="color:#64748b;font-size:12px;">管理岗</span><strong style="font-size:24px;line-height:1;color:#8b5cf6;">' + employees.filter(function (e) { return self._isManager(e.position); }).length + '</strong></div>',
         '<div style="display:flex;flex-direction:column;gap:8px;padding:14px 16px;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.06);"><span style="color:#64748b;font-size:12px;">离职</span><strong style="font-size:24px;line-height:1;color:#dc2626;">' + employees.filter(function (e) { return e.status === '离职'; }).length + '</strong></div>',
       '</div>',
@@ -175,13 +170,13 @@ const Employees = {
     var tagChip = mgrTag
       ? '<span style="font-size:10px;padding:1px 8px;border-radius:10px;background:' + mgrTag.color + '22;color:' + mgrTag.color + ';font-weight:600;">' + mgrTag.label + '</span>'
       : '';
-    var statusCell = e.status === '离职'
+    var statusCell = !e.status ? '<span style="font-size:12px;color:var(--text-light);">未填写</span>' : e.status === '离职'
       ? '<span class="tag tag-danger" style="font-size:11px;">离职</span>'
       : '<span class="tag tag-success" style="font-size:11px;">在职</span>';
 
     return '<tr class="emp-row"' + rowStyle +
       ' data-name="' + self._escape(e.name) + '" data-pos="' + self._escape(e.position) +
-      '" data-id="' + e.id + '" data-gender="' + self._escape(e.gender) + '" data-status="' + self._escape(e.status || '在职') +
+      '" data-id="' + e.id + '" data-gender="' + self._escape(e.gender) + '" data-status="' + self._escape(e.status) +
       '" data-building="' + self._escape(e.building) + '" data-company="' + self._escape(e.company) + '">' +
       '<td style="font-size:12px;color:var(--text-light);">' + String(index + 1).padStart(3, '0') + '</td>' +
       '<td>' +
@@ -233,68 +228,77 @@ const Employees = {
   },
 
   /** 表单 HTML（新增 / 编辑共用） */
-  _formHtml(emp) {
+  _formHtml(emp, options) {
     var s = this;
     var e = emp || {};
+    var opts = options || {};
     var isEdit = !!emp;
-    var disabledDept = '';
+    var personal = opts.registration || (!Auth.isAdmin() && !Auth.isLeader());
+    var registeredPhone = !opts.registration && e.registrationSource === 'phone';
+    var buildingOptions = Auth.isLeader() ? Auth.leaderBuildings() : s._buildingOptions;
+    var optional = function (list, selected) {
+      var values = list.slice();
+      if (selected && values.indexOf(selected) < 0) values.push(selected);
+      return '<option value=""' + (!selected ? ' selected' : '') + '>暂不填写</option>' + s._options(values, selected);
+    };
     return `
       <div class="form-row">
-        <div class="form-group"><label>姓名 *</label>
-          <input type="text" class="form-control" id="empName" value="${s._escape(e.name)}" placeholder="请输入姓名"></div>
-        <div class="form-group"><label>性别</label>
+        <div class="form-group"><label for="empName">姓名 *</label>
+          <input type="text" class="form-control" id="empName" value="${s._escape(e.name)}" placeholder="请输入姓名" required maxlength="80" autocomplete="name"></div>
+        <div class="form-group"><label for="empGender">性别</label>
           <select class="form-control" id="empGender">
             <option value="男"${e.gender !== '女' ? ' selected' : ''}>男</option>
             <option value="女"${e.gender === '女' ? ' selected' : ''}>女</option>
           </select></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>工作岗位</label>
+        <div class="form-group"><label for="empPosition">工作岗位</label>
           <select class="form-control" id="empPosition">${s._options(s._workPositions, e.position)}</select></div>
-        <div class="form-group"><label>人员性质</label>
-          <select class="form-control" id="empCompany">${s._options(s._companyOptions, e.company)}</select></div>
+        <div class="form-group"><label for="empCompany">人员性质（选填）</label>
+          <select class="form-control" id="empCompany">${optional(s._companyOptions, e.company)}</select></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>人员属性</label>
-          <select class="form-control" id="empPersonAttribute">${s._options(s._personAttributes, e.personAttribute)}</select></div>
-        <div class="form-group"><label>工作属性</label>
-          <select class="form-control" id="empWorkAttribute">${s._options(s._workAttributes, e.workAttribute)}</select></div>
+        <div class="form-group"><label for="empPersonAttribute">人员属性（选填）</label>
+          <select class="form-control" id="empPersonAttribute">${optional(s._personAttributes, e.personAttribute)}</select></div>
+        <div class="form-group"><label for="empWorkAttribute">工作属性（选填）</label>
+          <select class="form-control" id="empWorkAttribute">${optional(s._workAttributes, e.workAttribute)}</select></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>部门</label>
-          <select class="form-control" id="empDepartment">${s._options(s._departments, e.department)}</select></div>
-        <div class="form-group"><label>状态</label>
+        <div class="form-group"><label for="empDepartment">部门（选填）</label>
+          <select class="form-control" id="empDepartment">${optional(s._departments, e.department)}</select></div>
+        <div class="form-group"><label for="empStatus">状态（选填）</label>
           <select class="form-control" id="empStatus">
-            <option value="在职"${e.status !== '离职' ? ' selected' : ''}>在职</option>
+            <option value=""${!e.status ? ' selected' : ''}>暂不填写</option>
+            <option value="在职"${e.status === '在职' ? ' selected' : ''}>在职</option>
             <option value="离职"${e.status === '离职' ? ' selected' : ''}>离职</option>
           </select></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>区域</label>
+        <div class="form-group"><label for="empRegion">区域</label>
           <select class="form-control" id="empRegion">${s._options(s._regionOptions, e.region || '区域A')}</select></div>
-        <div class="form-group"><label>机房</label>
+        <div class="form-group"><label for="empRoom">机房</label>
           <select class="form-control" id="empRoom">${s._options(s._roomOptions, e.room || '机房A')}</select></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>楼栋</label>
-          <select class="form-control" id="empBuilding">${s._options(s._buildingOptions, e.building || '楼栋A')}</select></div>
-        <div class="form-group"><label>手机号</label>
-          <input type="text" class="form-control" id="empPhone" value="${s._escape(e.phone)}" placeholder="请输入手机号"></div>
+        <div class="form-group"><label for="empBuilding">楼栋（选填）</label>
+          <select class="form-control" id="empBuilding">${optional(buildingOptions, e.building)}</select></div>
+        <div class="form-group"><label for="empPhone">手机号${opts.registration ? ' *（登录账号）' : ''}</label>
+          <input type="tel" class="form-control" id="empPhone" value="${s._escape(e.phone)}" placeholder="请输入11位手机号" inputmode="tel" maxlength="11" autocomplete="tel" ${opts.registration ? 'required pattern="1[3-9][0-9]{9}"' : ''} ${!opts.registration && (personal || registeredPhone) ? 'readonly aria-readonly="true"' : ''}>
+          ${registeredPhone ? '<small style="display:block;margin-top:6px;color:var(--text-light);font-size:12px;">登录号码请联系管理员在账号维护中处理。</small>' : ''}</div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>邮箱</label>
+        <div class="form-group"><label for="empEmail">邮箱</label>
           <input type="email" class="form-control" id="empEmail" value="${s._escape(e.email)}" placeholder="请输入邮箱"></div>
       </div>
       <div class="form-row">
-        <div class="form-group"><label>入职日期</label>
-          <input type="date" class="form-control" id="empJoinDate" value="${e.joinDate || App.today()}"></div>
-        <div class="form-group"><label>离职日期</label>
-          <input type="date" class="form-control" id="empLeaveDate" value="${e.leaveDate || ''}"></div>
+        <div class="form-group"><label for="empJoinDate">入职日期</label>
+          <input type="date" class="form-control" id="empJoinDate" value="${s._escape(e.joinDate || new Date().toISOString().slice(0, 10))}"></div>
+        <div class="form-group"><label for="empLeaveDate">离职日期</label>
+          <input type="date" class="form-control" id="empLeaveDate" value="${s._escape(e.leaveDate)}"></div>
       </div>
 
       <hr style="margin:14px 0;">
-      <hr style="margin:14px 0;">
-      <div class="form-group"><label>简历附件</label>
+      <div class="form-group"><label for="empResume">简历附件</label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <input type="file" id="empResume" style="display:none;" accept=".pdf,.doc,.docx,.txt" onchange="Employees.pickResume(event)">
           <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('empResume').click()">选择文件</button>
@@ -302,7 +306,7 @@ const Employees = {
           <button type="button" class="btn btn-danger btn-sm" id="empResumeClear" style="display:none;" onclick="Employees.clearPendingResume()">删除</button>
           <span style="font-size:12px;color:#64748b;" id="empResumeName">${e.resumeName ? '已上传: ' + s._escape(e.resumeName) : '未上传简历'}</span>
         </div></div>
-      <div class="form-group"><label>证件上传</label>
+      <div class="form-group"><label for="empCredential">证件上传</label>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <input type="file" id="empCredential" style="display:none;" accept=".pdf,.doc,.docx,.txt,.jpg,.jpeg,.png" onchange="Employees.pickCredential(event)">
           <button type="button" class="btn btn-outline btn-sm" onclick="document.getElementById('empCredential').click()">选择文件</button>
@@ -310,12 +314,11 @@ const Employees = {
           <button type="button" class="btn btn-danger btn-sm" id="empCredentialClear" style="display:none;" onclick="Employees.clearPendingCredential()">删除</button>
           <span style="font-size:12px;color:#64748b;" id="empCredentialName">${e.credentialName ? '已上传: ' + s._escape(e.credentialName) : '未上传证件'}</span>
         </div></div>
-      <div class="form-group"><label>AI 人员简介</label>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
-          <button type="button" class="btn btn-info btn-sm" onclick="Employees.autoGenerateProfile()">🤖 AI 自动生成简介</button>
-          <span style="font-size:11px;color:#94a3b8;">上传简历后自动识别并生成重要技能简介</span>
-        </div>
-        <textarea class="form-control" id="empAiProfile" rows="3" placeholder="AI 生成或手工填写的人员简介">${s._escape(e.aiProfile)}</textarea>
+      <div class="form-group"><label for="empAiProfile">人员简介</label>
+        ${Auth.isAdmin() && !opts.registration ? '<div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">' +
+          '<button type="button" class="btn btn-info btn-sm" onclick="Employees.autoGenerateProfile()">🤖 AI 自动生成简介</button>' +
+          '<span style="font-size:11px;color:#94a3b8;">上传简历后自动识别并生成重要技能简介</span></div>' : ''}
+        <textarea class="form-control" id="empAiProfile" rows="3" placeholder="填写工作经历、技能或其他个人信息">${s._escape(e.aiProfile)}</textarea>
       </div>
       ${isEdit ? '<input type="hidden" id="empId" value="' + e.id + '">' : ''}
     `;
@@ -327,7 +330,9 @@ const Employees = {
   _resumeText: '',
 
   showAddModal() {
+    if (!Auth.isAdmin() && !Auth.isLeader()) { App.toast('仅管理员或楼长可添加人员', 'warning'); return; }
     var self = this;
+    this._editReturnPage = 'employees';
     this._pendingResume = { data: '', name: '' };
     this._pendingCredential = { data: '', name: '' };
     this._resumeText = '';
@@ -336,18 +341,16 @@ const Employees = {
     setTimeout(function () { self._syncAttachmentButtons(); }, 50);
   },
 
-  showEditModal(id) {
+  showEditModal(id, returnPage) {
     var self = this;
     var emp = Store.getEmployees().find(function (e) { return e.id === id; });
     if (!emp) return;
-    if (this._isFloorLeader() && this._leaderBuildings().indexOf(emp.building || '') < 0) {
-      App.toast('只能维护本楼栋人员', 'warning');
-      return;
-    }
+    if (!Auth.canManageEmployee(id)) { App.toast('无权维护此人员', 'warning'); return; }
+    this._editReturnPage = returnPage || (App.currentPage === 'profile' ? 'profile' : 'employees');
     this._pendingResume = { data: emp.resumeData || '', name: emp.resumeName || '' };
     this._pendingCredential = { data: emp.credentialData || '', name: emp.credentialName || '' };
     this._resumeText = '';
-    App.openModal('编辑人员', this._formHtml(emp),
+    App.openModal(this._editReturnPage === 'profile' ? '维护我的资料' : '编辑人员', this._formHtml(emp),
       '<button class="btn btn-primary" onclick="Employees.save()">保存</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>');
     setTimeout(function () { self._syncAttachmentButtons(); }, 50);
   },
@@ -368,6 +371,7 @@ const Employees = {
   pickResume(ev) {
     var file = ev.target.files && ev.target.files[0];
     if (!file) return;
+    if (file.size > 3 * 1024 * 1024) { App.toast('附件请控制在3MB以内', 'warning'); ev.target.value = ''; return; }
     var self = this;
     var reader = new FileReader();
     reader.onload = function (e2) {
@@ -375,7 +379,7 @@ const Employees = {
       var label = document.getElementById('empResumeName');
       if (label) label.textContent = '已上传: ' + file.name;
       self._syncAttachmentButtons();
-      self._extractResumeText(file);
+      if (Auth.isAdmin()) self._extractResumeText(file);
     };
     reader.readAsDataURL(file);
     ev.target.value = '';
@@ -384,6 +388,7 @@ const Employees = {
   pickCredential(ev) {
     var file = ev.target.files && ev.target.files[0];
     if (!file) return;
+    if (file.size > 3 * 1024 * 1024) { App.toast('附件请控制在3MB以内', 'warning'); ev.target.value = ''; return; }
     var self = this;
     var reader = new FileReader();
     reader.onload = function (e2) {
@@ -498,6 +503,7 @@ const Employees = {
 
   /** AI 自动生成人员简介（上传简历后自动触发，也可手动点击） */
   autoGenerateProfile() {
+    if (!Auth.isAdmin()) { App.toast('仅管理员可使用 AI 分析', 'warning'); return; }
     var text = this._resumeText;
     if (!text || text.trim().length < 10) {
       App.toast('请先上传可读取文本的简历', 'warning');
@@ -525,18 +531,11 @@ const Employees = {
       .catch(function () { App.toast('AI 请求失败：请先在 AI 问答中配置可访问的 API 地址和模型', 'error'); });
   },
 
-  save() {
+  readFormData() {
     var g = function (id) { var el = document.getElementById(id); return el ? el.value : ''; };
-    var id = g('empId');
     var name = g('empName').trim();
-    if (!name) { App.toast('请输入姓名', 'error'); return; }
     var building = g('empBuilding');
     var position = g('empPosition');
-    if (!building) building = this._buildingOptions[0] || '楼栋A';
-    if (this._isFloorLeader() && this._leaderBuildings().indexOf(building) < 0) {
-      App.toast('只能维护本楼栋人员', 'warning');
-      return;
-    }
     var data = {
       name: name,
       gender: g('empGender'),
@@ -558,30 +557,61 @@ const Employees = {
     if (this._pendingResume && this._pendingResume.data) {
       data.resumeData = this._pendingResume.data;
       data.resumeName = this._pendingResume.name;
-    } else if (id) {
+    } else {
       data.resumeData = '';
       data.resumeName = '';
     }
     if (this._pendingCredential && this._pendingCredential.data) {
       data.credentialData = this._pendingCredential.data;
       data.credentialName = this._pendingCredential.name;
-    } else if (id) {
+    } else {
       data.credentialData = '';
       data.credentialName = '';
     }
 
-    if (id) {
-      Store.updateEmployee(parseInt(id), data);
-      App.toast('人员信息已更新', 'success');
-    } else {
-      Store.addEmployee(data);
-      App.toast('人员添加成功', 'success');
-    }
-    App.closeModal();
-    App.navigate('employees');
+    return data;
   },
 
-  delete(id) {
+  async save() {
+    if (this._saving) return;
+    var idEl = document.getElementById('empId');
+    var id = idEl ? Number(idEl.value) : null;
+    if (id ? !Auth.canManageEmployee(id) : (!Auth.isAdmin() && !Auth.isLeader())) {
+      App.toast('无权维护此人员', 'error'); return;
+    }
+    var data = this.readFormData();
+    if (!data.name) { App.toast('请输入姓名', 'error'); return; }
+    if (data.phone && !/^1[3-9]\d{9}$/.test(data.phone)) { App.toast('请输入有效的11位手机号', 'error'); return; }
+    var emailInput = document.getElementById('empEmail');
+    if (emailInput && !emailInput.checkValidity()) { emailInput.reportValidity(); return; }
+    if (data.joinDate && data.leaveDate && data.leaveDate < data.joinDate) { App.toast('离职日期不能早于入职日期', 'error'); return; }
+    if (Auth.isLeader() && this._leaderBuildings().indexOf(data.building) < 0) {
+      App.toast('请选择本人负责的楼栋', 'warning'); return;
+    }
+    if (!Auth.isAdmin() && !Auth.isLeader()) {
+      var original = Store.getEmployees().find(function(e) { return e.id === id; });
+      data.phone = original ? original.phone : Auth.currentUser().phone;
+    }
+    this._saving = true;
+    var saveButton = document.querySelector('#modalFooter .btn-primary');
+    if (saveButton) { saveButton.disabled = true; saveButton.textContent = '保存中…'; }
+    try {
+      if (id) Store.updateEmployee(id, data);
+      else Store.addEmployee(data);
+      await Store.flushServerSync();
+      App.toast(id ? '人员信息已更新' : '人员添加成功', 'success');
+      App.closeModal();
+      App.navigate(this._editReturnPage || 'employees');
+    } catch (error) {
+      App.toast(error.message || '保存失败，请重试', 'error');
+    } finally {
+      this._saving = false;
+      if (saveButton) { saveButton.disabled = false; saveButton.textContent = '保存'; }
+    }
+  },
+
+  async delete(id) {
+    if (!Auth.isAdmin() && !Auth.isLeader()) { App.toast('无权删除人员', 'warning'); return; }
     var emp = Store.getEmployees().find(function (e) { return e.id === id; });
     if (!emp) return;
     if (this._isFloorLeader() && this._leaderBuildings().indexOf(emp.building || '') < 0) {
@@ -589,18 +619,24 @@ const Employees = {
       return;
     }
     if (App.confirm('确定要删除「' + emp.name + '」吗？\n相关考勤、请假和加班记录也会同步删除。')) {
-      Store.deleteEmployee(id);
-      App.toast('已删除', 'info');
-      App.navigate('employees');
+      try {
+        Store.deleteEmployee(id);
+        await Store.flushServerSync();
+        App.toast('已删除', 'info');
+        App.navigate('employees');
+      } catch (error) { App.toast(error.message || '删除失败，请重试', 'error'); }
     }
   },
 
-  clearAll() {
-    if (this._isFloorLeader()) { App.toast('楼长不能清空全部人员，请逐条维护本楼栋人员', 'warning'); return; }
+  async clearAll() {
+    if (!Auth.isAdmin()) { App.toast('仅管理员可清空全部人员', 'warning'); return; }
     if (!App.confirm('确定清空全部人员信息？关联的考勤、请假、加班和绩效记录也会一并清空。')) return;
-    Store.clearEmployees();
-    App.toast('人员信息已清空', 'info');
-    App.navigate('employees');
+    try {
+      Store.clearEmployees();
+      await Store.flushServerSync();
+      App.toast('人员信息已清空', 'info');
+      App.navigate('employees');
+    } catch (error) { App.toast(error.message || '清空失败，请重试', 'error'); }
   },
 
   /** 生成批量导入模板 */
@@ -617,6 +653,7 @@ const Employees = {
 
   /** 批量导入弹窗 */
   showImportModal() {
+    if (!Auth.isAdmin() && !Auth.isLeader()) { App.toast('无权导入人员', 'warning'); return; }
     App.openModal('批量导入人员',
       '<div class="form-group"><label>选择文件（CSV / Excel）</label>' +
       '<input type="file" id="importFileInput" accept=".csv,.xlsx,.xls" onchange="Employees.importFile(event)" style="display:block;margin-bottom:12px;">' +
@@ -628,6 +665,7 @@ const Employees = {
 
   /** 导入文件（CSV / Excel） */
   importFile(ev) {
+    if (!Auth.isAdmin() && !Auth.isLeader()) { App.toast('无权导入人员', 'warning'); return; }
     var file = ev.target.files[0];
     if (!file) return;
     var name = file.name.toLowerCase();
@@ -655,7 +693,8 @@ const Employees = {
   },
 
   /** 解析导入数据 */
-  _parseImportRows(rows) {
+  async _parseImportRows(rows) {
+    if (!Auth.isAdmin() && !Auth.isLeader()) { App.toast('无权导入人员', 'warning'); return; }
     if (!rows || rows.length < 2) { App.toast('数据不足，第一行为表头', 'error'); return; }
     var leaders = this._leaderBuildings();
     var emps = Store.getEmployees();
@@ -664,30 +703,33 @@ const Employees = {
       var cols = (rows[i] || []).map(function (c) { return String(c === undefined || c === null ? '' : c).trim(); });
       var name = cols[0];
       if (!name) continue;
-      var building = cols[11] || leaders[0] || '楼栋A';
-      if (leaders.length > 0 && leaders.indexOf(building) < 0) { skipped++; continue; }
+      var building = cols[11] || '';
+      if (Auth.isLeader() && leaders.indexOf(building) < 0) { skipped++; continue; }
       if (emps.some(function (e) { return e.name === name; })) { skipped++; continue; }
       Store.addEmployee({
         name: name,
         gender: cols[1] || '男',
         position: cols[2] || '',
         company: cols[3] || '',
-        personAttribute: cols[4] || '交付',
-        workAttribute: cols[5] || '标准班次',
-        phone: cols[6] || '',
-        email: cols[7] || '',
-        region: cols[8] || '区域A',
-        room: cols[9] || '机房A',
+        personAttribute: cols[4] || '',
+        workAttribute: cols[5] || '',
+        phone: cols[7] || '',
+        email: cols[8] || '',
+        region: cols[9] || '区域A',
+        room: cols[10] || '机房A',
         building: building,
-        status: cols[10] || '在职',
-        joinDate: cols[11] || App.today(),
-        leaveDate: cols[12] || ''
+        status: cols[12] || '',
+        joinDate: cols[13] || App.today(),
+        leaveDate: cols[14] || ''
       });
       added++;
     }
-    App.closeModal();
-    App.toast('导入完成：新增 ' + added + ' 人' + (skipped > 0 ? '，跳过 ' + skipped + ' 人' : ''), 'success');
-    App.navigate('employees');
+    try {
+      await Store.flushServerSync();
+      App.closeModal();
+      App.toast('导入完成：新增 ' + added + ' 人' + (skipped > 0 ? '，跳过 ' + skipped + ' 人' : ''), 'success');
+      App.navigate('employees');
+    } catch (error) { App.toast(error.message || '导入失败，请重试', 'error'); }
   },
 
   _csvLine(l) {

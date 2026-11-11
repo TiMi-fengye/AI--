@@ -3,26 +3,17 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>华北一部酒仙桥人力资源管理平台</title>
-<link rel="stylesheet" href="css/style.css?v=20261030accountcontrast"><link rel="stylesheet" href="css/theme.css?v=20261030accountcontrast">
+<link rel="stylesheet" href="css/style.css?v=20261111phone"><link rel="stylesheet" href="css/theme.css?v=20261111phone">
 <link rel="manifest" href="manifest.json"><meta name="theme-color" content="#050b18"><link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="人力资源"><meta name="mobile-web-app-capable" content="yes"><meta name="format-detection" content="telephone=no">
 </head>
 <body>
 <aside class="sidebar" id="sidebar"><div class="sidebar-header"><div class="logo"><div class="logo-icon">👥</div><div class="logo-text"><h1>华北一部酒仙桥人力资源管理平台</h1><span>华北一部酒仙桥人力资源管理平台</span></div></div></div>
-<nav class="sidebar-nav">
-<div class="nav-item active" data-page="dashboard"><span class="nav-icon">📊</span><span>数据看板</span></div>
-<div class="nav-item" data-page="employees"><span class="nav-icon">👤</span><span>人力资源</span></div>
-<div class="nav-item" data-page="attendance"><span class="nav-icon">⏰</span><span>考勤管理</span></div>
-<div class="nav-item" data-page="performance"><span class="nav-icon">📈</span><span>绩效管理</span></div>
-<div class="nav-item" data-page="cost"><span class="nav-icon">💰</span><span>费用结算</span></div>
-<div class="nav-item" data-page="org"><span class="nav-icon">🏢</span><span>组织架构</span></div>
-<div class="nav-item" data-page="ai"><span class="nav-icon">🤖</span><span>AI 智能问答</span></div>
-<div class="nav-item" data-page="admin"><span class="nav-icon">⚙️</span><span>系统设置</span></div>
-</nav><div class="sidebar-footer"><div class="system-info"><span>v2.0</span><span id="onlineCount">内网运行中</span></div></div></aside>
-<div class="main-content"><header class="top-header"><div class="header-left"><button class="menu-toggle" id="menuToggle" onclick="App.toggleSidebar()">☰</button><h2 class="page-title" id="pageTitle">📊 数据看板</h2></div>
-<div class="header-right"><div class="header-time" id="currentTime"></div><button class="btn btn-outline btn-sm mobile-install-btn" id="installAppBtn" type="button" hidden>📲 安装到手机</button><button class="btn btn-outline btn-sm" onclick="App.showIntroVideo()" style="padding:4px 10px;font-size:12px;margin-right:6px;">🎞️ 智能体介绍</button><button class="btn btn-outline btn-sm" onclick="App.showAuthMenu()" style="padding:4px 10px;font-size:12px;">🔐 账号</button><div class="header-status online"><span class="status-dot"></span><span>内网已连接</span></div></div></header>
-<div class="content-area" id="pageContent"></div></div>
+<nav class="sidebar-nav"></nav><div class="sidebar-footer"><div class="system-info"><span>v2.0</span><span id="onlineCount">内网运行中</span></div></div></aside>
+<div class="main-content"><header class="top-header"><div class="header-left"><button class="menu-toggle" id="menuToggle" onclick="App.toggleSidebar()">☰</button><h2 class="page-title" id="pageTitle">正在加载…</h2></div>
+<div class="header-right"><div class="header-time" id="currentTime"></div><button class="btn btn-outline btn-sm mobile-install-btn" id="installAppBtn" type="button" hidden>📲 安装到手机</button><button class="btn btn-outline btn-sm" id="introVideoBtn" hidden onclick="App.showIntroVideo()" style="padding:4px 10px;font-size:12px;margin-right:6px;">🎞️ 智能体介绍</button><button class="btn btn-outline btn-sm" onclick="App.showAuthMenu()" style="padding:4px 10px;font-size:12px;">🔐 账号</button><div class="header-status online"><span class="status-dot"></span><span>内网已连接</span></div></div></header>
+<div class="content-area" id="pageContent">正在加载当前账号的数据…</div></div>
 <div class="modal-overlay" id="modalOverlay"><div class="modal"><div class="modal-header"><h3 id="modalTitle">标题</h3><button class="modal-close" onclick="App.closeModal()">✕</button></div><div class="modal-body" id="modalBody"></div><div class="modal-footer" id="modalFooter"></div></div></div>
-<script src="js/store.js?v=20261031wechat"></script><script src="js/auth.js?v=20261031wechat"></script><script src="js/app.js?v=20261030accountcontrast"></script><script src="js/dashboard.js?v=20261030buildingtime"></script><script src="js/employees.js?v=20261031wechat"></script><script src="js/employee-profile.js?v=20261029hours"></script><script src="js/attendance.js?v=20261029hours"></script><script src="js/leave.js?v=20261029hours"></script><script src="js/org.js?v=20261029hours"></script><script src="js/importer.js?v=20261029hours"></script><script src="js/feishu.js?v=20261030feishuclient"></script><script src="js/wechat.js?v=20261031wechat"></script><script src="js/cost.js?v=20261029hours"></script><script src="js/overtime.js?v=20261029hours"></script><script src="js/xlsx.full.min.js?v=20261029hours"></script><script src="js/performance.js?v=20261029hours"></script><script src="js/admin.js?v=20261031wechat"></script><script src="js/permission.js?v=20261029hours"></script><script src="js/ai.js?v=20261029hours"></script><script src="js/mobile.js?v=20261031mobile2"></script>
+<script src="js/store.js?v=20261111phone"></script><script src="js/auth.js?v=20261111phone"></script><script src="js/app.js?v=20261111phone"></script><script src="js/dashboard.js?v=20261111phone"></script><script src="js/employees.js?v=20261111phone"></script><script src="js/employee-profile.js?v=20261111phone"></script><script src="js/self-profile.js?v=20261111phone"></script><script src="js/my-hours.js?v=20261111phone"></script><script src="js/attendance.js?v=20261111phone"></script><script src="js/leave.js?v=20261111phone"></script><script src="js/org.js?v=20261111phone"></script><script src="js/importer.js?v=20261111phone"></script><script src="js/feishu.js?v=20261111phone"></script><script src="js/cost.js?v=20261111phone"></script><script src="js/overtime.js?v=20261111phone"></script><script src="js/xlsx.full.min.js?v=20261111phone"></script><script src="js/performance.js?v=20261111phone"></script><script src="js/admin.js?v=20261111phone"></script><script src="js/permission.js?v=20261111phone"></script><script src="js/ai.js?v=20261111phone"></script><script src="js/mobile.js?v=20261111phone"></script>
 <script>if (window.MobileClient) MobileClient.init(); App.init();</script>
 </body></html>

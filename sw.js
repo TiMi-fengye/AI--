@@ -1,4 +1,4 @@
-const CACHE = "personnel-v4-mobile";
+const CACHE = "personnel-v5-phone";
 const APP_SHELL = [
   "./",
   "./login.html",
