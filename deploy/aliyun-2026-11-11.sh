@@ -18,12 +18,23 @@ python3 - "$PID" "$APP" > "$BACKUP/runtime.json" <<'PY'
 import json, os, pathlib, sys
 pid, app = sys.argv[1:]
 env = dict(entry.decode().split('=', 1) for entry in pathlib.Path('/proc/' + pid + '/environ').read_bytes().split(b'\0') if b'=' in entry)
+service_cwd = pathlib.Path('/proc/' + pid + '/cwd').resolve(strict=True)
+if service_cwd != pathlib.Path(app):
+    raise RuntimeError('Service working directory must be /opt/hr-system')
 config_path = pathlib.Path(app) / 'server/config.json'
 config = json.loads(config_path.read_text()) if config_path.exists() else {}
 mysql = config.get('mysql') or {}
-metadata = {'data_dir': os.path.realpath(env.get('HR_DATA_DIR') or app + '/server/data'),
+data_path = pathlib.Path(env.get('HR_DATA_DIR') or app + '/server/data')
+if not data_path.is_absolute():
+    data_path = service_cwd / data_path
+mysql_enabled = (env.get('HR_MYSQL_ENABLED') or str(bool(mysql.get('enabled')))).lower() == 'true'
+mysql_host = env.get('HR_MYSQL_HOST') or mysql.get('host') or '127.0.0.1'
+mysql_port = int(env.get('HR_MYSQL_PORT') or mysql.get('port') or 3306)
+if mysql_enabled and (mysql_host not in ('127.0.0.1', 'localhost') or mysql_port != 3306):
+    raise RuntimeError('This deployment helper requires local MySQL on port 3306')
+metadata = {'data_dir': os.path.realpath(data_path),
             'port': int(env.get('HR_PORT') or config.get('port') or 8080),
-            'mysql_enabled': (env.get('HR_MYSQL_ENABLED') or str(bool(mysql.get('enabled')))).lower() == 'true',
+            'mysql_enabled': mysql_enabled,
             'database': env.get('HR_MYSQL_DATABASE') or mysql.get('database') or 'hr_system'}
 assert 0 < metadata['port'] < 65536
 assert pathlib.Path(metadata['data_dir']).is_dir()
@@ -37,8 +48,12 @@ DATABASE=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data
 [[ "$DATA_DIR" != / && "$DATA_DIR" != /root && "$DATA_DIR" != "$BACKUP" && "$DATA_DIR" != /tmp ]]
 runuser -u "$OWNER" -- test -w "$DATA_DIR"
 df -Pk "$APP" "$BACKUP"
-printf 'Downloading release %s\n' "$COMMIT"
-curl --fail --location --connect-timeout 15 --max-time 120 --retry 1 --silent --show-error "https://codeload.github.com/TiMi-fengye/AI--/tar.gz/$COMMIT" -o "$STAGE/source.tar.gz"
+printf 'Preparing release %s\n' "$COMMIT"
+if [[ -n "${HR_RELEASE_ARCHIVE:-}" ]]; then
+  cp -- "$HR_RELEASE_ARCHIVE" "$STAGE/source.tar.gz"
+else
+  curl --fail --location --connect-timeout 15 --max-time 120 --retry 1 --silent --show-error "https://codeload.github.com/TiMi-fengye/AI--/tar.gz/$COMMIT" -o "$STAGE/source.tar.gz"
+fi
 printf '%s  %s\n' "$ARCHIVE_SHA" "$STAGE/source.tar.gz" | sha256sum --check --status
 install -d -m 700 "$STAGE/source"
 tar -xzf "$STAGE/source.tar.gz" --strip-components=1 -C "$STAGE/source"
@@ -81,17 +96,39 @@ updates/2026-11-11.md
 技术文档/README.md
 技术文档/07-手机号账号与数据权限.md
 FILES
+python3 - "$SOURCE" "$APP" "$BACKUP" <<'PY'
+import pathlib, sys
+source, app, backup = map(pathlib.Path, sys.argv[1:])
+def checked_file(root, relative, required):
+    if root.resolve() != root:
+        raise RuntimeError('Release directories must not contain symbolic links')
+    parts = pathlib.PurePosixPath(relative).parts
+    if not parts or pathlib.PurePosixPath(relative).is_absolute() or '..' in parts:
+        raise RuntimeError('Invalid release path')
+    path = root
+    for index, part in enumerate(parts):
+        path = path / part
+        if path.is_symlink():
+            raise RuntimeError('Release paths and parent directories must not be symbolic links: ' + relative)
+        if index < len(parts) - 1 and path.exists() and not path.is_dir():
+            raise RuntimeError('Release parent path is not a directory: ' + relative)
+    if (required or path.exists()) and not path.is_file():
+        raise RuntimeError('Release path is not a regular file: ' + relative)
+    return path
+existing = []
+for relative in (backup / 'release-files.txt').read_text().splitlines():
+    checked_file(source, relative, True)
+    if checked_file(app, relative, False).exists():
+        existing.append(relative)
+(backup / 'existing-files.txt').write_text(''.join(name + '\n' for name in existing))
+PY
 while IFS= read -r file; do
-  [[ -f "$SOURCE/$file" && ! -L "$SOURCE/$file" ]]
-  [[ "$(realpath -m "$APP/$file")" == "$APP/"* && ! -L "$APP/$file" ]]
-  if [[ -e "$APP/$file" ]]; then printf '%s\n' "$file" >> "$BACKUP/existing-files.txt"; fi
+  if [[ "$file" == *.js ]]; then node --check "$SOURCE/$file"; fi
 done < "$BACKUP/release-files.txt"
-find "$SOURCE/js" "$SOURCE/tests" -type f -name '*.js' -not -path '*/vendor/*' -print0 | xargs -0 -n 1 node --check
-node --check "$SOURCE/server/server.js"
-node --check "$SOURCE/server/auth-service.js"
 (cd "$SOURCE" && node --test tests/*.test.js) > "$BACKUP/release-tests.log" 2>&1
 tail -n 9 "$BACKUP/release-tests.log"
 if [[ "$MYSQL_ENABLED" == 1 ]]; then
+  [[ $(mysql --protocol=socket -uroot -NBe 'SELECT @@port') == 3306 ]]
   mysql --protocol=socket -uroot "$DATABASE" -NBe "SELECT SHA2(payload,256), COALESCE(JSON_LENGTH(payload,'$.employees'),0) FROM system_snapshots WHERE snapshot_key='default'" > "$BACKUP/mysql-before.txt"
 fi
 STOPPED=0
