@@ -80,6 +80,8 @@ const App = {
     }
     Store.clearSessionData();
     await Store.restoreFromServer();
+    try { await Store.loadOrganizationSettings(); }
+    catch (error) { App.toast('组织配置读取失败：' + error.message, 'warning'); }
     Store._serverHydrating = true;
     try { Store.init(); } finally { Store._serverHydrating = false; }
     Store._serverSyncReady = true;

@@ -224,7 +224,7 @@ const Dashboard = {
   /** 楼栋总人数概览（含楼长） */
   _buildingHeadcountCard() {
     var leaderMap = Object.create(null);
-    (Employees._buildingLeaders || []).forEach(function (item) { leaderMap[item.building] = item.leaders; });
+    (typeof Store.getBuildingLeaders === 'function' ? Store.getBuildingLeaders() : Employees._buildingLeaders || []).forEach(function (item) { leaderMap[item.building] = Array.isArray(item.leaders) ? item.leaders.join('、') : item.leaders; });
     var map = Object.create(null);
     (Auth.isLeader() ? Auth.leaderBuildings() : (Employees._buildingOptions || [])).forEach(function (b) { map[b] = { building: b, leader: leaderMap[b] || '', count: 0 }; });
     this._employees().forEach(function (emp) {

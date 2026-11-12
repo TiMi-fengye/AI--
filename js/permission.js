@@ -30,7 +30,7 @@ const Permission = {
     const user = (username && Auth._getUsers()[username]) || { role: 'user', buildings: [] };
     const e = Auth.escape;
     const employees = Store.getEmployees();
-    const buildings = [...new Set(employees.map(emp => emp.building).filter(Boolean).concat(typeof Employees === 'undefined' ? [] : Employees._buildingOptions))];
+    const buildings = [...new Set((typeof Store.getPersonnelOptions === 'function' ? Store.getPersonnelOptions('buildings') : employees.map(emp => emp.building).filter(Boolean)).concat(user.buildings || []))];
     App.openModal(username ? '编辑账号权限' : '添加账号',
       '<div class="form-group"><label>手机号 / 管理账号 *</label><input class="form-control" id="permUsername" value="' + e(username || '') + '"' + (username ? ' readonly' : '') + ' autocomplete="off"></div>' +
       '<div class="form-group"><label>姓名 *</label><input class="form-control" id="permName" value="' + e(user.name || '') + '"></div>' +

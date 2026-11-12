@@ -3,21 +3,27 @@
  * 楼栋楼长只可维护本人负责楼栋人员；管理人员用特殊颜色标识
  */
 const Employees = {
-  /**
-   * 公开源码不携带生产组织架构中的负责人姓名。
-   * 部署方可在本地数据中按实际组织架构维护楼栋负责人。
-   */
-  _buildingLeaders: [],
+  // 实际选项由服务端组织配置和当前可见人员档案提供，公开代码不携带生产名单。
+  get _buildingLeaders() { return typeof Store.getBuildingLeaders === 'function' ? Store.getBuildingLeaders() : []; },
+  get _regionOptions() { return this._organizationOptions('regions', 'region'); },
+  get _roomOptions() { return this._organizationOptions('rooms', 'room'); },
+  get _buildingOptions() { return this._organizationOptions('buildings', 'building'); },
+  get _companyOptions() { return this._organizationOptions('companies', 'company'); },
+  get _personAttributes() { return this._organizationOptions('personAttributes', 'personAttribute'); },
+  get _workAttributes() { return this._organizationOptions('workAttributes', 'workAttribute'); },
+  get _workPositions() { return this._organizationOptions('positions', 'position'); },
+  get _departments() { return this._organizationOptions('departments', 'department'); },
+  get _statusOptions() { return this._organizationOptions('statuses', 'status'); },
 
-  // Public package uses neutral demo options. Configure real organization values locally.
-  _regionOptions: ["区域A", "区域B"],
-  _roomOptions: ["机房A", "机房B"],
-  _buildingOptions: ["楼栋A", "楼栋B", "楼栋C"],
-  _companyOptions: ["公司A", "公司B", "外包单位"],
-  _personAttributes: ["属性A", "属性B"],
-  _workAttributes: ["标准班次", "轮班"],
-  _workPositions: ["岗位A", "岗位B", "岗位C", "主管", "工程师"],
-  _departments: ["部门A", "部门B"],
+  _organizationOptions(key, field) {
+    if (typeof Store.getPersonnelOptions === 'function') return Store.getPersonnelOptions(key);
+    if (key === 'buildings' && Auth.isLeader()) return Auth.leaderBuildings();
+    var user = Auth.currentUser ? Auth.currentUser() : null;
+    var employees = user ? Store.getEmployees() : [];
+    var values = employees.map(function(employee) { return employee[field]; });
+    if (key === 'departments' && user && typeof Store.getDepartments === 'function') values = values.concat(Store.getDepartments());
+    return Array.from(new Set(values.filter(function(value) { return typeof value === 'string' && value.trim(); }).map(function(value) { return value.trim(); })));
+  },
 
   /** 判断是否为管理岗 */
   _isManager(position) {
@@ -87,9 +93,9 @@ const Employees = {
     var monthLogs = Store.getMonthUpdateLogs ? Store.getMonthUpdateLogs() : [];
     var lateCount = Store.getLateUpdateCount ? Store.getLateUpdateCount() : 0;
 
-    var positions = Array.from(new Set(employees.map(function (e) { return e.position; }).filter(Boolean)));
-    var buildings = Array.from(new Set(employees.map(function (e) { return e.building; }).filter(Boolean)));
-    var companies = Array.from(new Set(employees.map(function (e) { return e.company; }).filter(Boolean)));
+    var positions = this._workPositions;
+    var buildings = this._buildingOptions;
+    var companies = this._companyOptions;
 
     var rows = employees.slice().sort(function (a, b) {
       var aMgr = self._isManager(a.position) ? 0 : 1;
@@ -132,12 +138,12 @@ const Employees = {
           '<input type="text" class="form-control" id="empSearch" placeholder="搜索姓名" style="width:150px;" oninput="Employees.filter()">',
           '<select class="form-control" id="empFilterPosition" style="width:140px;" onchange="Employees.filter()"><option value="">全部职位</option>' + this._options(positions, '') + '</select>',
           '<select class="form-control" id="empFilterGender" style="width:110px;" onchange="Employees.filter()"><option value="">全部性别</option><option value="男">男</option><option value="女">女</option></select>',
-          '<select class="form-control" id="empFilterStatus" style="width:120px;" onchange="Employees.filter()"><option value="">全部状态</option><option value="在职">在职</option><option value="离职">离职</option></select>',
+          '<select class="form-control" id="empFilterStatus" style="width:120px;" onchange="Employees.filter()"><option value="">全部状态</option>' + this._options(this._statusOptions, '') + '</select>',
           '<select class="form-control" id="empFilterBuilding" style="width:120px;" onchange="Employees.filter()"><option value="">全部楼栋</option>' + this._options(buildings, '') + '</select>',
           '<select class="form-control" id="empFilterCompany" style="width:140px;" onchange="Employees.filter()"><option value="">全部人员性质</option>' + this._options(companies, '') + '</select>',
           '<label style="display:flex;align-items:center;gap:4px;white-space:nowrap;font-weight:600;"><input type="checkbox" id="empFilterManager" onchange="Employees.filter()"> 只看管理岗</label>',
         '</div>',
-        '<span style="white-space:nowrap;">大区：' + (this._regionOptions[0] || '区域A') + ' · 机房：' + (this._roomOptions[0] || '机房A') + (leaderBuildings.length ? ' · 负责楼栋：' + leaderBuildings.join('、') : '') + '</span>',
+        '<span style="line-height:1.6;">大区：' + this._escape(this._regionOptions.join('、') || '未配置') + ' · 机房：' + this._escape(this._roomOptions.join('、') || '未配置') + (leaderBuildings.length ? ' · 负责楼栋：' + this._escape(leaderBuildings.join('、')) : '') + '</span>',
       '</div>',
 
       // 人员表
@@ -172,7 +178,7 @@ const Employees = {
       : '';
     var statusCell = !e.status ? '<span style="font-size:12px;color:var(--text-light);">未填写</span>' : e.status === '离职'
       ? '<span class="tag tag-danger" style="font-size:11px;">离职</span>'
-      : '<span class="tag tag-success" style="font-size:11px;">在职</span>';
+      : '<span class="tag' + (e.status === '在职' ? ' tag-success' : '') + '" style="font-size:11px;">' + self._escape(e.status) + '</span>';
 
     return '<tr class="emp-row"' + rowStyle +
       ' data-name="' + self._escape(e.name) + '" data-pos="' + self._escape(e.position) +
@@ -246,14 +252,11 @@ const Employees = {
         <div class="form-group"><label for="empName">姓名 *</label>
           <input type="text" class="form-control" id="empName" value="${s._escape(e.name)}" placeholder="请输入姓名" required maxlength="80" autocomplete="name"></div>
         <div class="form-group"><label for="empGender">性别</label>
-          <select class="form-control" id="empGender">
-            <option value="男"${e.gender !== '女' ? ' selected' : ''}>男</option>
-            <option value="女"${e.gender === '女' ? ' selected' : ''}>女</option>
-          </select></div>
+          <select class="form-control" id="empGender">${optional(['男', '女'], e.gender)}</select></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label for="empPosition">工作岗位</label>
-          <select class="form-control" id="empPosition">${s._options(s._workPositions, e.position)}</select></div>
+          <select class="form-control" id="empPosition">${optional(s._workPositions, e.position)}</select></div>
         <div class="form-group"><label for="empCompany">人员性质（选填）</label>
           <select class="form-control" id="empCompany">${optional(s._companyOptions, e.company)}</select></div>
       </div>
@@ -267,17 +270,13 @@ const Employees = {
         <div class="form-group"><label for="empDepartment">部门（选填）</label>
           <select class="form-control" id="empDepartment">${optional(s._departments, e.department)}</select></div>
         <div class="form-group"><label for="empStatus">状态（选填）</label>
-          <select class="form-control" id="empStatus">
-            <option value=""${!e.status ? ' selected' : ''}>暂不填写</option>
-            <option value="在职"${e.status === '在职' ? ' selected' : ''}>在职</option>
-            <option value="离职"${e.status === '离职' ? ' selected' : ''}>离职</option>
-          </select></div>
+          <select class="form-control" id="empStatus">${optional(s._statusOptions, e.status)}</select></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label for="empRegion">区域</label>
-          <select class="form-control" id="empRegion">${s._options(s._regionOptions, e.region || '区域A')}</select></div>
+          <select class="form-control" id="empRegion">${optional(s._regionOptions, e.region)}</select></div>
         <div class="form-group"><label for="empRoom">机房</label>
-          <select class="form-control" id="empRoom">${s._options(s._roomOptions, e.room || '机房A')}</select></div>
+          <select class="form-control" id="empRoom">${optional(s._roomOptions, e.room)}</select></div>
       </div>
       <div class="form-row">
         <div class="form-group"><label for="empBuilding">楼栋（选填）</label>
@@ -641,8 +640,9 @@ const Employees = {
 
   /** 生成批量导入模板 */
   downloadTemplate() {
+    var example = ['示例员工', '男', this._workPositions[0] || '', this._companyOptions[0] || '', this._personAttributes[0] || '', this._workAttributes[0] || '', '', '13800000000', 'example@example.com', this._regionOptions[0] || '', this._roomOptions[0] || '', this._buildingOptions[0] || '', this._statusOptions.indexOf('在职') >= 0 ? '在职' : this._statusOptions[0] || '', App.today(), ''];
     var text = '姓名,性别,工作岗位,人员性质,人员属性,工作属性,月薪,手机,邮箱,区域,机房,楼栋,状态,入职日期,离职日期\n' +
-      '示例员工,男,岗位A,公司A,属性A,标准班次,,13800000000,example@example.com,区域A,机房A,楼栋A,在职,2026-01-01,\n';
+      example.map(function(value) { var text = String(value); return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text; }).join(',') + '\n';
     var blob = new Blob(['\uFEFF' + text], { type: 'text/csv;charset=utf-8' });
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -715,8 +715,8 @@ const Employees = {
         workAttribute: cols[5] || '',
         phone: cols[7] || '',
         email: cols[8] || '',
-        region: cols[9] || '区域A',
-        room: cols[10] || '机房A',
+        region: cols[9] || '',
+        room: cols[10] || '',
         building: building,
         status: cols[12] || '',
         joinDate: cols[13] || App.today(),

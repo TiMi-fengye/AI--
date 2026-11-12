@@ -11,6 +11,11 @@ const SESSION_MS = 12 * 60 * 60 * 1000;
 const PROFILE_FIELDS = ["name", "gender", "position", "company", "personAttribute", "workAttribute", "department", "status", "region", "room", "building", "phone", "email", "joinDate", "leaveDate", "aiProfile", "resumeData", "resumeName", "credentialData", "credentialName", "_resumeText"];
 const COLLECTIONS = ["employees", "attendance", "leaveRequests", "overtime", "settlements", "departments", "updateLogs", "performance"];
 const PHONE = /^1[3-9]\d{9}$/;
+const ORGANIZATION_OPTIONS = {
+  companies: "company", personAttributes: "personAttribute", workAttributes: "workAttribute",
+  positions: "position", departments: "department", statuses: "status",
+  buildings: "building", regions: "region", rooms: "room"
+};
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -251,8 +256,35 @@ function writeAtomic(file, value) {
   fs.writeFileSync(temp, JSON.stringify(value, null, 2), { mode: 0o600 });
   fs.renameSync(temp, file);
 }
+function organizationStrings(values, label) {
+  if (!Array.isArray(values) || values.length > 1000 || values.some(value => typeof value !== "string" || value.length > 200)) fail(400, label + "选项格式无效");
+  return [...new Set(values.map(value => value.trim()).filter(Boolean))];
+}
+function organizationSettings(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || (value.schemaVersion !== undefined && value.schemaVersion !== 1)) fail(400, "组织配置格式无效");
+  if (value.revision !== undefined && (!Number.isSafeInteger(value.revision) || value.revision < 0)) fail(400, "组织配置版本无效");
+  if (value.options !== undefined && (!value.options || typeof value.options !== "object" || Array.isArray(value.options))) fail(400, "组织下拉选项格式无效");
+  const options = {};
+  for (const key of Object.keys(ORGANIZATION_OPTIONS)) {
+    if (value.options && Object.prototype.hasOwnProperty.call(value.options, key)) options[key] = organizationStrings(value.options[key], key);
+  }
+  const result = { schemaVersion: 1, revision: value.revision || 0, options };
+  if (Object.prototype.hasOwnProperty.call(value, "buildingLeaders")) {
+    if (!Array.isArray(value.buildingLeaders) || value.buildingLeaders.length > 1000) fail(400, "楼栋负责人格式无效");
+    const seen = new Set();
+    result.buildingLeaders = value.buildingLeaders.map(row => {
+      if (!row || typeof row !== "object" || Array.isArray(row) || typeof row.building !== "string" || !row.building.trim() || row.building.length > 200 || seen.has(row.building.trim())) fail(400, "楼栋负责人格式无效或楼栋重复");
+      const leaders = Array.isArray(row.leaders) ? organizationStrings(row.leaders, "楼栋负责人").join("、") : row.leaders;
+      if (typeof leaders !== "string" || leaders.length > 2000) fail(400, "楼栋负责人名称格式无效");
+      seen.add(row.building.trim());
+      return { building: row.building.trim(), leaders: leaders.trim() };
+    });
+  }
+  return result;
+}
 function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
   const userFile = path.join(dataDir, "auth-users.json");
+  const organizationFile = path.join(dataDir, "organization-settings.json");
   let users = Object.create(null);
   try { const data = JSON.parse(fs.readFileSync(userFile, "utf8")); for (const [key, user] of Object.entries(data)) users[key] = user; }
   catch (error) { if (error.code !== "ENOENT") throw new Error("账号文件无法读取，请检查备份和文件权限"); }
@@ -288,11 +320,71 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
   }
   function requireUser(req) { const user = getUser(req); if (!user) fail(401, "请先登录"); return user; }
   function requireAdmin(req) { const user = requireUser(req); if (user.role !== "admin") fail(403, "仅管理员可执行此操作"); return user; }
+  function readOrganization() {
+    try { return organizationSettings(JSON.parse(fs.readFileSync(organizationFile, "utf8"))); }
+    catch (error) {
+      if (error.code === "ENOENT") return { schemaVersion: 1, revision: 0, options: {} };
+      // Invalid private configuration must fail closed, never overwrite it with inferred values.
+      throw new Error("组织配置文件无法读取，请检查备份和文件权限");
+    }
+  }
+  async function organizationView(actor) {
+    const configured = readOrganization();
+    const snapshot = normalizeSnapshot(await readSnapshot());
+    const options = {};
+    for (const [key, field] of Object.entries(ORGANIZATION_OPTIONS)) {
+      // Explicitly configured lists are authoritative, including unused or empty options.
+      // Only missing lists are derived from existing business values.
+      const inferred = (key === "departments" ? snapshot.departments : []).concat(snapshot.employees.map(employee => employee[field]));
+      options[key] = Object.prototype.hasOwnProperty.call(configured.options, key) ? configured.options[key].slice() : [...new Set(inferred.filter(value => typeof value === "string" && value.trim()).map(value => value.trim()))];
+    }
+    let buildingLeaders = configured.buildingLeaders;
+    if (!buildingLeaders) {
+      const assigned = new Map();
+      // Display an existing assignment only; this never creates accounts or grants roles.
+      for (const account of Object.values(users)) if (account.role === "leader" && Array.isArray(account.buildings)) {
+        for (const building of account.buildings) {
+          if (typeof building !== "string" || !building.trim()) continue;
+          const names = assigned.get(building.trim()) || new Set();
+          if (text(account.name)) names.add(text(account.name));
+          assigned.set(building.trim(), names);
+        }
+      }
+      buildingLeaders = [...assigned].map(([building, names]) => ({ building, leaders: [...names].join("、") }));
+    }
+    if (actor && actor.role === "leader") {
+      options.buildings = [...new Set((actor.buildings || []).filter(building => typeof building === "string" && building.trim()))];
+      buildingLeaders = buildingLeaders.filter(row => options.buildings.includes(row.building));
+    } else if (!actor || actor.role !== "admin") buildingLeaders = [];
+    return { schemaVersion: 1, revision: configured.revision, options, buildingLeaders: clone(buildingLeaders) };
+  }
   async function handle(req, res, url) {
-    if (!(url.startsWith("/api/auth/") || url === "/api/data/snapshot.json")) return false;
+    if (!(url.startsWith("/api/auth/") || url === "/api/data/snapshot.json" || url === "/api/organization/options" || url === "/api/organization/settings")) return false;
     try {
       checkOrigin(req);
-      if (url === "/api/auth/status" && req.method === "GET") sendJson(res, 200, { ok: true, setupRequired: setupRequired(), setupAllowed: isLocalSetup(req) });
+      if (url === "/api/organization/options" && req.method === "GET") {
+        await queue;
+        const view = await organizationView(getUser(req));
+        sendJson(res, 200, { ok: true, options: view.options });
+      } else if (url === "/api/organization/settings" && req.method === "GET") {
+        requireUser(req);
+        await queue;
+        sendJson(res, 200, { ok: true, ...(await organizationView(requireUser(req))) });
+      } else if (url === "/api/organization/settings" && req.method === "POST") {
+        requireAdmin(req);
+        const body = await readJson(req, 1024 * 1024);
+        if (!Number.isSafeInteger(body.revision) || body.revision < 0) fail(400, "请携带当前组织配置版本");
+        if (!Object.prototype.hasOwnProperty.call(body, "options") && !Object.prototype.hasOwnProperty.call(body, "buildingLeaders")) fail(400, "请提供组织配置内容");
+        await serialized(async () => {
+          requireAdmin(req);
+          const current = readOrganization();
+          if (body.revision !== current.revision) fail(409, "组织配置已更新，请刷新后重试");
+          const incoming = organizationSettings(body);
+          const next = organizationSettings({ ...current, options: { ...current.options, ...incoming.options }, ...(Object.prototype.hasOwnProperty.call(incoming, "buildingLeaders") ? { buildingLeaders: incoming.buildingLeaders } : {}), revision: current.revision + 1 });
+          writeAtomic(organizationFile, next);
+        });
+        sendJson(res, 200, { ok: true, ...(await organizationView(requireAdmin(req))) });
+      } else if (url === "/api/auth/status" && req.method === "GET") sendJson(res, 200, { ok: true, setupRequired: setupRequired(), setupAllowed: isLocalSetup(req) });
       else if (url === "/api/auth/session" && req.method === "GET") sendJson(res, 200, { ok: true, user: getUser(req) });
       else if (url === "/api/auth/setup" && req.method === "POST") {
         if (!isLocalSetup(req)) fail(403, "请在服务器本机使用 localhost 完成管理员初始化");

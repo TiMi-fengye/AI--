@@ -11,6 +11,65 @@ const Store = {
   _lastServerSnapshot: null,
   _data: Object.create(null),
   _memoryOnly: false,
+  _organizationSettings: null,
+  _organizationPublicOnly: false,
+  _organizationLoadSequence: 0,
+
+  // 组织配置独立于业务快照，仅保留当前身份可见的内存副本。
+  async loadOrganizationSettings(publicOnly) {
+    const sequence = ++this._organizationLoadSequence;
+    const identity = this._organizationIdentity();
+    const response = await fetch(publicOnly ? '/api/organization/options' : '/api/organization/settings', { cache: 'no-store', credentials: 'same-origin' });
+    const payload = await response.json();
+    if (sequence !== this._organizationLoadSequence || identity !== this._organizationIdentity()) return null;
+    if (!response.ok || payload.ok === false || !payload.options || typeof payload.options !== 'object' || Array.isArray(payload.options)) throw new Error(payload.message || '组织配置读取失败');
+    const options = {};
+    ['companies', 'personAttributes', 'workAttributes', 'positions', 'departments', 'statuses', 'buildings', 'regions', 'rooms'].forEach(key => {
+      if (Object.prototype.hasOwnProperty.call(payload.options, key)) {
+        if (!Array.isArray(payload.options[key])) throw new Error('组织配置格式无效');
+        options[key] = this._uniqueOptionValues(payload.options[key]);
+      }
+    });
+    const leaders = !publicOnly && Array.isArray(payload.buildingLeaders) ? payload.buildingLeaders.filter(item => item && typeof item === 'object').map(item => ({
+      building: typeof item.building === 'string' ? item.building.trim() : '',
+      leaders: Array.isArray(item.leaders) ? this._uniqueOptionValues(item.leaders).join('、') : typeof item.leaders === 'string' ? item.leaders.trim() : ''
+    })).filter(item => item.building && item.leaders) : [];
+    this._organizationSettings = { schemaVersion: 1, revision: payload.revision, options, buildingLeaders: leaders };
+    this._organizationPublicOnly = !!publicOnly;
+    return this.getOrganizationSettings();
+  },
+  _uniqueOptionValues(values) {
+    return [...new Set((Array.isArray(values) ? values : []).filter(value => typeof value === 'string').map(value => value.trim()).filter(Boolean))];
+  },
+  _organizationIdentity() {
+    const user = typeof Auth !== 'undefined' && Auth.currentUser ? Auth.currentUser() : null;
+    return user ? JSON.stringify([user.username, user.role, user.employeeId, user.buildings || []]) : '';
+  },
+  getOrganizationSettings() {
+    const result = this._organizationSettings ? JSON.parse(JSON.stringify(this._organizationSettings)) : { schemaVersion: 1, options: {}, buildingLeaders: [] };
+    result.buildingLeaders = this.getBuildingLeaders();
+    if (typeof Auth !== 'undefined' && Auth.isLeader()) result.options.buildings = this.getPersonnelOptions('buildings');
+    return result;
+  },
+  getPersonnelOptions(key) {
+    const settings = this._organizationSettings;
+    const configured = settings && settings.options[key] || [];
+    const user = typeof Auth !== 'undefined' && Auth.currentUser ? Auth.currentUser() : null;
+    if (key === 'buildings' && user && Auth.isLeader()) return this._uniqueOptionValues(Auth.leaderBuildings());
+    const fields = { companies: 'company', personAttributes: 'personAttribute', workAttributes: 'workAttribute', positions: 'position', departments: 'department', statuses: 'status', buildings: 'building', regions: 'region', rooms: 'room' };
+    if (settings && Object.prototype.hasOwnProperty.call(settings.options, key)) return this._uniqueOptionValues(configured);
+    // 公开注册不能从同一浏览器遗留业务缓存推导选项。
+    const records = user && !this._organizationPublicOnly ? this.getEmployees() : [];
+    let values = configured.concat(fields[key] ? records.map(employee => employee[fields[key]]) : []);
+    if (key === 'departments' && user && !this._organizationPublicOnly) values = values.concat(this.getDepartments());
+    return this._uniqueOptionValues(values);
+  },
+  getBuildingLeaders() {
+    if (this._organizationPublicOnly || typeof Auth === 'undefined' || (!Auth.isAdmin() && !Auth.isLeader())) return [];
+    const leaders = this._organizationSettings && this._organizationSettings.buildingLeaders || [];
+    const allowed = Auth.isLeader() ? Auth.leaderBuildings() : null;
+    return leaders.filter(item => !allowed || allowed.includes(item.building)).map(item => ({ building: item.building, leaders: item.leaders }));
+  },
 
   init() {
     const list = this.getEmployees();
@@ -24,22 +83,16 @@ const Store = {
     if (!this.get("overtime")) this.set("overtime", []);
     if (!this.get("settlements")) this.set("settlements", []);
     if (!this.get("update_logs")) this.set("update_logs", []);
-    if (!this.get("departments") || this.get("departments").length === 0) this.set("departments", ["部门A", "部门B"]);
+    if (!this.get("departments")) this.set("departments", []);
     // 迁移旧员工字段
     var _emps = this.getEmployees();
     var _changed = false;
     for (var _i = 0; _i < _emps.length; _i++) {
       var _e = _emps[_i];
-      if (!_e.region) { _e.region = "区域A"; _changed = true; }
-      if (!_e.room) { _e.room = "机房A"; _changed = true; }
       // 飞书绑定已停用，删除遗留身份字段，保留人员业务资料。
       ["feishuOpenId", "feishuUserId", "feishuUnionId"].forEach(function (field) {
         if (Object.prototype.hasOwnProperty.call(_e, field)) { delete _e[field]; _changed = true; }
       });
-      // 数据迁移与兼容处理：缺失性别使用中性默认值。
-      if (_e.gender !== "男" && _e.gender !== "女") {
-        _e.gender = "男"; _changed = true;
-      }
     }
     if (_changed) this.set("employees", _emps);
     this.refreshRates();
@@ -132,6 +185,9 @@ const Store = {
     this._serverSyncTimer = null;
     this._writeVersion = this._syncedVersion = 0;
     this._lastServerSnapshot = null;
+    this._organizationSettings = null;
+    this._organizationPublicOnly = false;
+    this._organizationLoadSequence++;
     this._data = Object.create(null);
     this._memoryOnly = true;
     if (typeof AI !== 'undefined') AI.messages = [];
@@ -155,9 +211,6 @@ const Store = {
     var es = this.getEmployees();
     emp.id = this._nextId(es);
     emp.createdAt = new Date().toISOString();
-    if (!emp.region) emp.region = "区域A";
-    if (!emp.room) emp.room = "机房A";
-    if (!emp.gender) emp.gender = "男";
     if (!emp.joinDate) emp.joinDate = new Date().toISOString().split("T")[0];
     es.push(emp);
     this.set("employees", es);

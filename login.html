@@ -109,14 +109,15 @@
       <footer class="login-footer"><button class="install-app-btn" id="installAppBtn" type="button" hidden>📲 安装到手机桌面</button>&copy; 2026 华北一部酒仙桥人力资源管理平台</footer>
     </div>
   </main>
-  <script src="js/store.js?v=20261111phone"></script>
-  <script src="js/auth.js?v=20261111phone"></script>
-  <script src="js/employees.js?v=20261111phone"></script>
-  <script src="js/mobile.js?v=20261111phone"></script>
+  <script src="js/store.js?v=20261112org"></script>
+  <script src="js/auth.js?v=20261112org"></script>
+  <script src="js/employees.js?v=20261112org"></script>
+  <script src="js/mobile.js?v=20261112org"></script>
   <script>
     // 共享人员表单的附件操作在登录页使用同一条状态提示。
     const App = { today: function() { return new Date().toISOString().slice(0, 10); }, toast: function(message, type) { showLoginStatus(message, type === 'error' ? 'error' : 'info'); } };
     let registrationReady = false;
+    let authModeSequence = 0;
     function showLoginStatus(message, kind) {
       const status = document.getElementById('loginError');
       status.textContent = message;
@@ -124,8 +125,12 @@
       status.hidden = false;
     }
     function clearLoginStatus() { document.getElementById('loginError').hidden = true; }
-    function showAuthMode(mode) {
+    async function showAuthMode(mode) {
+      const sequence = ++authModeSequence;
       if (mode === 'register' && !registrationReady) {
+        try { await Store.loadOrganizationSettings(true); }
+        catch (error) { if (sequence === authModeSequence) showLoginStatus('注册选项读取失败，请稍后重试：' + error.message); return; }
+        if (sequence !== authModeSequence) return;
         document.getElementById('registrationFields').innerHTML = Employees._formHtml(null, { registration: true });
         Employees._pendingResume = { data: '', name: '' };
         Employees._pendingCredential = { data: '', name: '' };
