@@ -18,7 +18,7 @@ const Permission = {
           return '<tr><td>' + e(user.name) + '</td><td>' + e(username) + '</td><td>' + Auth.roleLabel(user.role) + '</td><td>' + (employee ? e(employee.name) + '（' + e(employee.phone || '') + '）' : '未绑定') + '</td><td>' + e((user.buildings || []).join('、') || '—') + '</td><td><button class="btn btn-outline btn-sm" data-edit="' + e(username) + '">编辑权限</button> ' + (username !== 'admin' && username !== Auth.currentUser().username ? '<button class="btn btn-danger btn-sm" data-delete="' + e(username) + '">删除账号</button>' : '') + '</td></tr>';
         }).join('') +
         '</tbody></table></div></div></div>' +
-        '<p style="margin-top:16px;color:var(--text-light);line-height:1.9;">管理员可查看全部信息。楼长只可查看和维护指定楼栋的信息。普通人员只可维护自己绑定的档案、提交自己的加班和请假申请、查看自己的小时数。手机号注册的账号自动绑定个人档案；楼长身份由管理员分配。</p>';
+        '<p style="margin-top:16px;color:var(--text-light);line-height:1.9;">管理员可查看全部信息。楼长只可查看和维护指定楼栋的信息。普通人员只可维护自己绑定的档案、提交自己的加班和请假申请、查看自己的小时数。手机号注册的账号自动绑定个人档案；楼长身份由管理员分配。设为楼长并分配楼栋后，看板自动同步姓名；更换人员时调整账号权限即可。</p>';
       container.querySelector('#permAdd').onclick = () => this.showEditModal();
       container.querySelectorAll('[data-edit]').forEach(button => { button.onclick = () => this.showEditModal(button.dataset.edit); });
       container.querySelectorAll('[data-delete]').forEach(button => { button.onclick = () => this.deleteAccount(button.dataset.delete); });
@@ -66,6 +66,7 @@ const Permission = {
     try {
       await Store.flushServerSync();
       await Auth.saveUser(body);
+      await this._refreshBuildingLeaders();
       App.closeModal();
       App.toast('账号权限已保存', 'success');
       this.render(document.getElementById('pageContent'));
@@ -77,8 +78,14 @@ const Permission = {
     if (!Auth.isAdmin() || !App.confirm('确定删除账号“' + username + '”？人员档案会保留。')) return;
     try {
       await Auth.deleteUser(username);
+      await this._refreshBuildingLeaders();
       App.toast('账号已删除', 'success');
       this.render(document.getElementById('pageContent'));
     } catch (error) { App.toast(error.message, 'error'); }
+  },
+
+  async _refreshBuildingLeaders() {
+    try { await Store.loadOrganizationSettings(); }
+    catch (_) { App.toast('账号已更新，楼长名单同步失败，请重新打开数据看板', 'warning'); }
   }
 };

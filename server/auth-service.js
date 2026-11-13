@@ -359,20 +359,22 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
       const inferred = (key === "departments" ? snapshot.departments : []).concat(snapshot.employees.map(employee => employee[field]));
       options[key] = Object.prototype.hasOwnProperty.call(configured.options, key) ? configured.options[key].slice() : [...new Set(inferred.filter(value => typeof value === "string" && value.trim()).map(value => value.trim()))];
     }
-    let buildingLeaders = configured.buildingLeaders;
-    if (!buildingLeaders) {
-      const assigned = new Map();
-      // Display an existing assignment only; this never creates accounts or grants roles.
-      for (const account of Object.values(users)) if (account.role === "leader" && Array.isArray(account.buildings)) {
-        for (const building of account.buildings) {
-          if (typeof building !== "string" || !building.trim()) continue;
-          const names = assigned.get(building.trim()) || new Set();
-          if (text(account.name)) names.add(text(account.name));
-          assigned.set(building.trim(), names);
-        }
+    const assigned = new Map();
+    // Current authorized accounts are the only display source. Historical manual
+    // names remain in the private backup/configuration but are never displayed.
+    // Registration and login do not grant a role or derive one from a job title.
+    for (const account of Object.values(users)) if (account.role === "leader" && Array.isArray(account.buildings)) {
+      const employee = positiveId(account.employeeId) ? snapshot.employees.find(row => row.id === account.employeeId) : null;
+      const name = text(employee && employee.name) || text(account.name);
+      if (!name) continue;
+      for (const building of account.buildings) {
+        if (typeof building !== "string" || !building.trim()) continue;
+        const names = assigned.get(building.trim()) || new Set();
+        names.add(name);
+        assigned.set(building.trim(), names);
       }
-      buildingLeaders = [...assigned].map(([building, names]) => ({ building, leaders: [...names].join("、") }));
     }
+    let buildingLeaders = [...assigned].map(([building, names]) => ({ building, leaders: [...names].join("、") }));
     if (actor && actor.role === "leader") {
       options.buildings = [...new Set((actor.buildings || []).filter(building => typeof building === "string" && building.trim()))];
       buildingLeaders = buildingLeaders.filter(row => options.buildings.includes(row.building));
@@ -395,13 +397,14 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         requireAdmin(req);
         const body = await readJson(req, 1024 * 1024);
         if (!Number.isSafeInteger(body.revision) || body.revision < 0) fail(400, "请携带当前组织配置版本");
-        if (!Object.prototype.hasOwnProperty.call(body, "options") && !Object.prototype.hasOwnProperty.call(body, "buildingLeaders")) fail(400, "请提供组织配置内容");
+        if (Object.prototype.hasOwnProperty.call(body, "buildingLeaders")) fail(400, "楼长名单由账号权限自动同步，请在账号与人员权限中维护");
+        if (!Object.prototype.hasOwnProperty.call(body, "options")) fail(400, "请提供组织配置内容");
         await serialized(async () => {
           requireAdmin(req);
           const current = readOrganization();
           if (body.revision !== current.revision) fail(409, "组织配置已更新，请刷新后重试");
           const incoming = organizationSettings(body);
-          const next = organizationSettings({ ...current, options: { ...current.options, ...incoming.options }, ...(Object.prototype.hasOwnProperty.call(incoming, "buildingLeaders") ? { buildingLeaders: incoming.buildingLeaders } : {}), revision: current.revision + 1 });
+          const next = organizationSettings({ ...current, options: { ...current.options, ...incoming.options }, revision: current.revision + 1 });
           writeAtomic(organizationFile, next);
         });
         sendJson(res, 200, { ok: true, ...(await organizationView(requireAdmin(req))) });

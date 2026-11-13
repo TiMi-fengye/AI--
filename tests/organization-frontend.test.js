@@ -40,7 +40,7 @@ function select(html, field) {
   return html.match(new RegExp('<select[^>]*id="emp' + field + '"[^>]*>([\\s\\S]*?)</select>'))[1];
 }
 
-test('管理员下拉使用已保存配置，空楼栋和楼长也恢复到看板', async () => {
+test('管理员下拉使用已保存选项，看板展示服务端同步的楼长和空楼栋', async () => {
   const { context, requests } = fixture();
   await context.Store.loadOrganizationSettings();
   assert.deepEqual(requests, ['/api/organization/settings']);
@@ -170,4 +170,138 @@ test('格式异常的成功响应不会清空已保存选项', async () => {
   context.fetch = async () => ({ ok: true, json: async () => ({ ok: true, options: { companies: '错误格式' } }) });
   await assert.rejects(context.Store.loadOrganizationSettings(), /格式无效/);
   assert.deepEqual(Array.from(context.Employees._companyOptions), ['已配置性质']);
+});
+
+function dashboardRefreshFixture() {
+  const f = fixture();
+  const target = { innerHTML: '' };
+  const elements = { dashboardBuildingHeadcount: target };
+  const events = { focus: [], visibilitychange: [] };
+  f.context.document = {
+    visibilityState: 'visible',
+    getElementById: id => elements[id] || null,
+    addEventListener: (event, handler) => events[event].push(handler)
+  };
+  f.context.window = { addEventListener: (event, handler) => events[event].push(handler) };
+  f.context.App.currentPage = 'dashboard';
+  f.context.Auth.canAccessPage = page => page === 'dashboard';
+  return { ...f, target, elements, events };
+}
+
+test('楼长同步中和失败时隐藏旧姓名且不影响已保存下拉，成功空名单移除前任', async () => {
+  const { context, response, target } = dashboardRefreshFixture();
+  await context.Store.loadOrganizationSettings();
+  let finish;
+  context.fetch = () => new Promise(done => { finish = done; });
+  const pending = context.Dashboard.refreshBuildingLeaders();
+  assert.match(target.innerHTML, /正在同步楼长/);
+  assert.doesNotMatch(target.innerHTML, /本栋负责人|其他栋负责人/);
+  finish({ ok: false, json: async () => ({ ok: false, message: '暂时不可用' }) });
+  await pending;
+  assert.match(target.innerHTML, /楼长同步失败/);
+  assert.doesNotMatch(target.innerHTML, /本栋负责人|其他栋负责人/);
+  assert.deepEqual(Array.from(context.Store.getPersonnelOptions('companies')), ['已配置性质']);
+  context.fetch = async () => ({ ok: true, json: async () => ({ ...response, buildingLeaders: [] }) });
+  await context.Dashboard.refreshBuildingLeaders();
+  assert.match(target.innerHTML, /待分配楼长/);
+  assert.doesNotMatch(target.innerHTML, /本栋负责人|其他栋负责人/);
+});
+
+test('看板纳入仅有授权楼长的楼栋并转义姓名，不读取旧的固定名单回退', async () => {
+  const { context, response } = fixture();
+  response.buildingLeaders = [{ building: '仅楼长的楼栋', leaders: '<img src=x onerror=alert(1)>' }];
+  await context.Store.loadOrganizationSettings();
+  const html = context.Dashboard._buildingHeadcountCard();
+  assert.match(html, /仅楼长的楼栋/);
+  assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.doesNotMatch(html, /<img/);
+  context.Store.getBuildingLeaders = undefined;
+  Object.defineProperty(context.Employees, '_buildingLeaders', { value: [{ building: '本栋', leaders: '历史固定负责人' }], configurable: true });
+  assert.doesNotMatch(context.Dashboard._buildingHeadcountCard(), /历史固定负责人/);
+});
+
+test('看板刷新按最新请求与当前页面生效，离开页面后不改动后续界面', async () => {
+  const { context, response, target, elements } = dashboardRefreshFixture();
+  const pending = [];
+  context.fetch = () => new Promise(done => { pending.push(done); });
+  const first = context.Dashboard.refreshBuildingLeaders();
+  const second = context.Dashboard.refreshBuildingLeaders();
+  pending[1]({ ok: true, json: async () => ({ ...response, buildingLeaders: [{ building: '本栋', leaders: '新楼长' }] }) });
+  await second;
+  assert.match(target.innerHTML, /新楼长/);
+  pending[0]({ ok: true, json: async () => response });
+  await first;
+  assert.match(target.innerHTML, /新楼长/);
+  assert.doesNotMatch(target.innerHTML, /本栋负责人/);
+  const third = context.Dashboard.refreshBuildingLeaders();
+  const nextTarget = { innerHTML: '其他页面的内容' };
+  elements.dashboardBuildingHeadcount = nextTarget;
+  context.App.currentPage = 'employees';
+  pending[2]({ ok: true, json: async () => response });
+  await third;
+  assert.equal(nextTarget.innerHTML, '其他页面的内容');
+});
+
+test('返回看板和重新可见会只读同步楼长，隐藏页面与普通人员不触发请求', async () => {
+  const { context, response, target, events, requests } = dashboardRefreshFixture();
+  // 隔离其他费用卡片，使真实 render 仍可验证进入看板触发自动同步。
+  for (const name of ['_deductionCard', '_increaseCard', '_leaveCard', '_otCard', '_buildingTimeBalanceCard', '_monthChangesCard', '_newEmployeesCard', '_updateLogCard']) context.Dashboard[name] = () => '';
+  context.Store.getOrCalcSettlement = () => null;
+  context.Store.getStats = () => ({});
+  const container = { innerHTML: '' };
+  context.Dashboard.render(container);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  assert.match(target.innerHTML, /本栋负责人/);
+  assert.match(container.innerHTML, /id="dashboardBuildingHeadcount"/);
+  assert.equal(events.focus.length, 1);
+  context.Dashboard._bindLeaderRefresh();
+  assert.equal(events.focus.length, 1);
+  response.buildingLeaders = [{ building: '本栋', leaders: '替任楼长' }];
+  await events.focus[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(target.innerHTML, /替任楼长/);
+  context.document.visibilityState = 'hidden';
+  const before = requests.length;
+  events.focus[0](); events.visibilitychange[0]();
+  assert.equal(requests.length, before);
+  context.document.visibilityState = 'visible';
+  events.visibilitychange[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, before + 1);
+  context.Auth.canAccessPage = () => false;
+  events.focus[0]();
+  assert.equal(requests.length, before + 1);
+});
+
+test('权限保存和删除成功后刷新楼长名单，刷新失败不误报账号操作失败', async () => {
+  const { context, response, requests } = fixture();
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../js/permission.js'), 'utf8') + '\nglobalThis.Permission = Permission;', context);
+  const elements = Object.fromEntries(Object.entries({ permUsername: 'test-leader', permName: '新楼长', permPassword: '', permRole: 'leader', permEmployee: '1', permBuildings: '本栋' }).map(([key, value]) => [key, { value }]));
+  elements.permSave = { disabled: false };
+  elements.pageContent = {};
+  context.document = { getElementById: id => elements[id] };
+  const operations = [], toasts = [];
+  context.App.confirm = () => true;
+  context.App.closeModal = () => operations.push('closed');
+  context.App.toast = (message, type) => toasts.push({ message, type });
+  context.Permission.render = () => operations.push('render');
+  context.Store.flushServerSync = async () => operations.push('flushed');
+  context.Auth.saveUser = async () => {
+    operations.push('saved');
+    response.buildingLeaders = [{ building: '本栋', leaders: '新楼长' }];
+  };
+  context.Auth.deleteUser = async () => { operations.push('deleted'); response.buildingLeaders = []; };
+  await context.Permission.saveAccount(true);
+  assert.deepEqual(operations, ['flushed', 'saved', 'closed', 'render']);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(Array.from(context.Store.getBuildingLeaders(), row => row.leaders), ['新楼长']);
+  await context.Permission.deleteAccount('test-leader');
+  assert.equal(requests.length, 2);
+  assert.deepEqual(Array.from(context.Store.getBuildingLeaders()), []);
+  context.fetch = async () => { throw new Error('网络异常'); };
+  await context.Permission.saveAccount(true);
+  assert.ok(toasts.some(row => row.type === 'warning' && row.message.includes('账号已更新')));
+  assert.equal(toasts.at(-1).type, 'success');
+  assert.equal(elements.permSave.disabled, false);
 });

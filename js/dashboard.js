@@ -43,12 +43,43 @@ const Dashboard = {
         this._leaveCard(),
         this._otCard(),
       "</div>",
-      this._buildingHeadcountCard(),
+      '<div id="dashboardBuildingHeadcount">' + this._buildingHeadcountCard() + '</div>',
       this._buildingTimeBalanceCard(),
       this._monthChangesCard(monthYm),
       this._newEmployeesCard(monthYm),
       this._updateLogCard(monthLogs, lateCount)
     ].join("") + '</div>';
+    this._bindLeaderRefresh();
+    this.refreshBuildingLeaders();
+  },
+
+  _bindLeaderRefresh() {
+    if (this._leaderRefreshBound) return;
+    this._leaderRefreshBound = true;
+    const refresh = () => {
+      if (App.currentPage === 'dashboard' && document.visibilityState !== 'hidden' && Auth.canAccessPage('dashboard')) return this.refreshBuildingLeaders();
+    };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+  },
+
+  async refreshBuildingLeaders() {
+    const target = document.getElementById('dashboardBuildingHeadcount');
+    if (!target || App.currentPage !== 'dashboard' || !Auth.canAccessPage('dashboard')) return;
+    const identity = Store._organizationIdentity();
+    const sequence = (this._leaderRefreshSequence || 0) + 1;
+    this._leaderRefreshSequence = sequence;
+    const isCurrent = () => sequence === this._leaderRefreshSequence && identity === Store._organizationIdentity() &&
+      App.currentPage === 'dashboard' && Auth.canAccessPage('dashboard') && document.getElementById('dashboardBuildingHeadcount') === target;
+    try {
+      const loading = Store.loadOrganizationSettings();
+      // 旧楼长不作为加载或失败时的回退名单。
+      target.innerHTML = this._buildingHeadcountCard();
+      const settings = await loading;
+      if (settings && isCurrent()) target.innerHTML = this._buildingHeadcountCard();
+    } catch (error) {
+      if (isCurrent()) target.innerHTML = this._buildingHeadcountCard();
+    }
   },
 
   _deductionCard() {
@@ -224,9 +255,12 @@ const Dashboard = {
   /** 楼栋总人数概览（含楼长） */
   _buildingHeadcountCard() {
     var leaderMap = Object.create(null);
-    (typeof Store.getBuildingLeaders === 'function' ? Store.getBuildingLeaders() : Employees._buildingLeaders || []).forEach(function (item) { leaderMap[item.building] = Array.isArray(item.leaders) ? item.leaders.join('、') : item.leaders; });
+    (typeof Store.getBuildingLeaders === 'function' ? Store.getBuildingLeaders() : []).forEach(function (item) { leaderMap[item.building] = Array.isArray(item.leaders) ? item.leaders.join('、') : item.leaders; });
+    var leaderStatus = typeof Store.getBuildingLeadersStatus === 'function' ? Store.getBuildingLeadersStatus() : 'ready';
+    var emptyLeader = leaderStatus === 'loading' ? '正在同步楼长…' : leaderStatus === 'error' ? '楼长同步失败' : leaderStatus === 'idle' ? '楼长待同步' : '待分配楼长';
     var map = Object.create(null);
     (Auth.isLeader() ? Auth.leaderBuildings() : (Employees._buildingOptions || [])).forEach(function (b) { map[b] = { building: b, leader: leaderMap[b] || '', count: 0 }; });
+    Object.keys(leaderMap).forEach(function (b) { if (!map[b]) map[b] = { building: b, leader: leaderMap[b], count: 0 }; });
     this._employees().forEach(function (emp) {
       var b = emp.building || '未分配';
       if (!map[b]) map[b] = { building: b, leader: leaderMap[b] || '', count: 0 };
@@ -238,13 +272,13 @@ const Dashboard = {
     var cards = items.map(function (item) {
       return '<div style="display:flex;flex-direction:column;gap:6px;padding:14px 16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;">' +
         '<span style="font-size:14px;font-weight:700;color:#0f172a;">' + Auth.escape(item.building) + '</span>' +
-        '<span style="font-size:12px;color:#3b82f6;font-weight:600;">' + Auth.escape(item.leader || '未配置楼长') + '</span>' +
+        '<span style="font-size:12px;color:#3b82f6;font-weight:600;">' + Auth.escape(item.leader || emptyLeader) + '</span>' +
         '<strong style="font-size:24px;line-height:1;color:#2563eb;">' + item.count + '</strong>' +
         '</div>';
     }).join('');
     return '<div class="card" style="margin-top:16px;">' +
       '<div class="card-header" style="padding:14px 18px;"><h3 style="font-size:15px;">🏢 楼栋总人数概览</h3>' +
-      '<span style="font-size:12px;color:#94a3b8;">共 ' + total + ' 人</span></div>' +
+      '<span style="font-size:12px;color:#94a3b8;">楼长自动同步 · 共 ' + total + ' 人</span></div>' +
       '<div class="card-body" style="padding:14px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;">' + cards + '</div></div>';
   },
 

@@ -14,29 +14,38 @@ const Store = {
   _organizationSettings: null,
   _organizationPublicOnly: false,
   _organizationLoadSequence: 0,
+  _buildingLeadersStatus: 'idle',
 
   // 组织配置独立于业务快照，仅保留当前身份可见的内存副本。
   async loadOrganizationSettings(publicOnly) {
     const sequence = ++this._organizationLoadSequence;
     const identity = this._organizationIdentity();
-    const response = await fetch(publicOnly ? '/api/organization/options' : '/api/organization/settings', { cache: 'no-store', credentials: 'same-origin' });
-    const payload = await response.json();
-    if (sequence !== this._organizationLoadSequence || identity !== this._organizationIdentity()) return null;
-    if (!response.ok || payload.ok === false || !payload.options || typeof payload.options !== 'object' || Array.isArray(payload.options)) throw new Error(payload.message || '组织配置读取失败');
-    const options = {};
-    ['companies', 'personAttributes', 'workAttributes', 'positions', 'departments', 'statuses', 'buildings', 'regions', 'rooms'].forEach(key => {
-      if (Object.prototype.hasOwnProperty.call(payload.options, key)) {
-        if (!Array.isArray(payload.options[key])) throw new Error('组织配置格式无效');
-        options[key] = this._uniqueOptionValues(payload.options[key]);
-      }
-    });
-    const leaders = !publicOnly && Array.isArray(payload.buildingLeaders) ? payload.buildingLeaders.filter(item => item && typeof item === 'object').map(item => ({
-      building: typeof item.building === 'string' ? item.building.trim() : '',
-      leaders: Array.isArray(item.leaders) ? this._uniqueOptionValues(item.leaders).join('、') : typeof item.leaders === 'string' ? item.leaders.trim() : ''
-    })).filter(item => item.building && item.leaders) : [];
-    this._organizationSettings = { schemaVersion: 1, revision: payload.revision, options, buildingLeaders: leaders };
-    this._organizationPublicOnly = !!publicOnly;
-    return this.getOrganizationSettings();
+    this._buildingLeadersStatus = publicOnly ? 'idle' : 'loading';
+    try {
+      const response = await fetch(publicOnly ? '/api/organization/options' : '/api/organization/settings', { cache: 'no-store', credentials: 'same-origin' });
+      const payload = await response.json();
+      if (sequence !== this._organizationLoadSequence || identity !== this._organizationIdentity()) return null;
+      if (!response.ok || payload.ok === false || !payload.options || typeof payload.options !== 'object' || Array.isArray(payload.options)) throw new Error(payload.message || '组织配置读取失败');
+      const options = {};
+      ['companies', 'personAttributes', 'workAttributes', 'positions', 'departments', 'statuses', 'buildings', 'regions', 'rooms'].forEach(key => {
+        if (Object.prototype.hasOwnProperty.call(payload.options, key)) {
+          if (!Array.isArray(payload.options[key])) throw new Error('组织配置格式无效');
+          options[key] = this._uniqueOptionValues(payload.options[key]);
+        }
+      });
+      const leaders = !publicOnly && Array.isArray(payload.buildingLeaders) ? payload.buildingLeaders.filter(item => item && typeof item === 'object').map(item => ({
+        building: typeof item.building === 'string' ? item.building.trim() : '',
+        leaders: Array.isArray(item.leaders) ? this._uniqueOptionValues(item.leaders).join('、') : typeof item.leaders === 'string' ? item.leaders.trim() : ''
+      })).filter(item => item.building && item.leaders) : [];
+      this._organizationSettings = { schemaVersion: 1, revision: payload.revision, options, buildingLeaders: leaders };
+      this._organizationPublicOnly = !!publicOnly;
+      this._buildingLeadersStatus = publicOnly ? 'idle' : 'ready';
+      return this.getOrganizationSettings();
+    } catch (error) {
+      if (sequence !== this._organizationLoadSequence || identity !== this._organizationIdentity()) return null;
+      this._buildingLeadersStatus = 'error';
+      throw error;
+    }
   },
   _uniqueOptionValues(values) {
     return [...new Set((Array.isArray(values) ? values : []).filter(value => typeof value === 'string').map(value => value.trim()).filter(Boolean))];
@@ -65,10 +74,14 @@ const Store = {
     return this._uniqueOptionValues(values);
   },
   getBuildingLeaders() {
-    if (this._organizationPublicOnly || typeof Auth === 'undefined' || (!Auth.isAdmin() && !Auth.isLeader())) return [];
+    if (this.getBuildingLeadersStatus() !== 'ready') return [];
     const leaders = this._organizationSettings && this._organizationSettings.buildingLeaders || [];
     const allowed = Auth.isLeader() ? Auth.leaderBuildings() : null;
     return leaders.filter(item => !allowed || allowed.includes(item.building)).map(item => ({ building: item.building, leaders: item.leaders }));
+  },
+  getBuildingLeadersStatus() {
+    if (this._organizationPublicOnly || typeof Auth === 'undefined' || (!Auth.isAdmin() && !Auth.isLeader())) return 'idle';
+    return this._buildingLeadersStatus;
   },
 
   init() {
@@ -188,6 +201,7 @@ const Store = {
     this._organizationSettings = null;
     this._organizationPublicOnly = false;
     this._organizationLoadSequence++;
+    this._buildingLeadersStatus = 'idle';
     this._data = Object.create(null);
     this._memoryOnly = true;
     if (typeof AI !== 'undefined') AI.messages = [];

@@ -30,10 +30,11 @@ const configured = {
   buildingLeaders: [{ building: "第一楼", leaders: ["第一楼负责人"] }, { building: "第二楼", leaders: "第二楼负责人" }, { building: "未使用楼栋", leaders: "预设负责人" }]
 };
 
-async function fixture(t, settings) {
+async function fixture(t, settings, accounts) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hr-organization-tests-"));
   const organizationFile = path.join(directory, "organization-settings.json");
   if (settings) fs.writeFileSync(organizationFile, JSON.stringify(settings));
+  if (accounts) fs.writeFileSync(path.join(directory, "auth-users.json"), JSON.stringify(accounts));
   let snapshot = structuredClone(initialSnapshot), writes = 0;
   const service = createAuthService({ dataDir: directory, readSnapshot: async () => structuredClone(snapshot), writeSnapshot: async value => { writes++; snapshot = structuredClone(value); } });
   const server = http.createServer(async (req, res) => { if (!(await service.handle(req, res, new URL(req.url, "http://localhost").pathname))) { res.writeHead(404); res.end(); } });
@@ -77,7 +78,7 @@ test("未配置下拉项时从既有人员和部门推导，不产生示例值�
   assert.equal(f.writes, 0);
 });
 
-test("独立配置优先保留原选项和空楼栋，公开接口不含楼长姓名", async t => {
+test("独立配置保留原选项和空楼栋，旧手填楼长姓名不再展示且不公开", async t => {
   const f = await fixture(t, configured);
   const publicOptions = await f.request("/api/organization/options");
   assert.deepEqual(publicOptions.data.options, configured.options);
@@ -86,8 +87,9 @@ test("独立配置优先保留原选项和空楼栋，公开接口不含楼长�
   assert.equal(all.status, 200);
   assert.equal(all.data.revision, 3);
   assert.deepEqual(all.data.options.buildings, ["第一楼", "第二楼", "未使用楼栋"]);
-  assert.equal(all.data.buildingLeaders[0].leaders, "第一楼负责人");
-  assert.equal(all.data.buildingLeaders[2].leaders, "预设负责人");
+  assert.deepEqual(all.data.buildingLeaders, []);
+  assert.doesNotMatch(JSON.stringify(all.data), /负责人/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(f.organizationFile, "utf8")), configured);
   assert.deepEqual(f.snapshot, initialSnapshot);
   assert.equal(f.writes, 0);
   assert.equal(staticFile(f.directory, "/server/data/organization-settings.json"), null);
@@ -101,7 +103,7 @@ test("楼长只接收负责楼栋及对应负责人，普通人员不接收楼�
   const leaderSettings = await f.request("/api/organization/settings", "GET", undefined, leader);
   assert.equal(leaderSettings.status, 200);
   assert.deepEqual(leaderSettings.data.options.buildings, ["第一楼"]);
-  assert.deepEqual(leaderSettings.data.buildingLeaders, [{ building: "第一楼", leaders: "第一楼负责人" }]);
+  assert.deepEqual(leaderSettings.data.buildingLeaders, [{ building: "第一楼", leaders: "测试人员甲" }]);
   assert.doesNotMatch(JSON.stringify(leaderSettings.data), /第二楼|预设负责人/);
   assert.deepEqual((await f.request("/api/organization/options", "GET", undefined, leader)).data.options.buildings, ["第一楼"]);
   const own = await f.request("/api/organization/settings", "GET", undefined, user);
@@ -116,14 +118,18 @@ test("楼长只接收负责楼栋及对应负责人，普通人员不接收楼�
 test("管理员持久化配置不改人员或账号权限，保留未更新字段并拒绝旧版本与跨站写入", async t => {
   const f = await fixture(t, configured);
   const beforeUsers = fs.readFileSync(path.join(f.directory, "auth-users.json"), "utf8");
-  const update = { revision: 3, options: { companies: ["  恢复单位  ", "恢复单位", ""], statuses: [] }, buildingLeaders: [{ building: "第一楼", leaders: ["显示负责人甲", "显示负责人乙"] }] };
+  const update = { revision: 3, options: { companies: ["  恢复单位  ", "恢复单位", ""], statuses: [] } };
+  const original = fs.readFileSync(f.organizationFile, "utf8");
+  const manual = await f.request("/api/organization/settings", "POST", { ...update, buildingLeaders: [{ building: "第一楼", leaders: "手填负责人" }] }, f.admin);
+  assert.equal(manual.status, 400); assert.match(manual.data.message, /账号权限自动同步/);
+  assert.equal(fs.readFileSync(f.organizationFile, "utf8"), original);
   assert.equal((await f.request("/api/organization/settings", "POST", update, f.admin, { Origin: "https://other.example" })).status, 403);
   const saved = await f.request("/api/organization/settings", "POST", update, f.admin);
   assert.equal(saved.status, 200); assert.equal(saved.data.revision, 4);
   assert.deepEqual(saved.data.options.companies, ["恢复单位"]);
   assert.deepEqual(saved.data.options.statuses, []);
   assert.deepEqual(saved.data.options.buildings, configured.options.buildings);
-  assert.deepEqual(saved.data.buildingLeaders, [{ building: "第一楼", leaders: "显示负责人甲、显示负责人乙" }]);
+  assert.deepEqual(saved.data.buildingLeaders, []);
   const persisted = JSON.parse(fs.readFileSync(f.organizationFile, "utf8"));
   assert.equal(persisted.revision, 4);
   assert.deepEqual(persisted.options.companies, ["恢复单位"]);
@@ -149,11 +155,11 @@ test("损坏配置拒绝读取和覆盖，格式错误的写入不能破坏已�
   assert.equal(fs.readFileSync(f.organizationFile, "utf8"), "{invalid-json");
 });
 
-test("并发管理员配置写入按版本串行，配置缺失时楼长显示仅源于既有授权账号", async t => {
+test("并发管理员配置写入按版本串行，楼长姓名优先绑定人员而非账号别名", async t => {
   const f = await fixture(t);
   await f.account("existing-leader", "leader", ["第一楼"], 1);
   const inferred = await f.request("/api/organization/settings", "GET", undefined, f.admin);
-  assert.deepEqual(inferred.data.buildingLeaders, [{ building: "第一楼", leaders: "existing-leader测试账号" }]);
+  assert.deepEqual(inferred.data.buildingLeaders, [{ building: "第一楼", leaders: "测试人员甲" }]);
   const [first, second] = await Promise.all([
     f.request("/api/organization/settings", "POST", { revision: 0, options: { companies: ["第一个修改"] } }, f.admin),
     f.request("/api/organization/settings", "POST", { revision: 0, options: { companies: ["第二个修改"] } }, f.admin)
@@ -161,4 +167,75 @@ test("并发管理员配置写入按版本串行，配置缺失时楼长显示�
   assert.deepEqual([first.status, second.status].sort(), [200, 409]);
   assert.equal(JSON.parse(fs.readFileSync(f.organizationFile, "utf8")).revision, 1);
   assert.deepEqual(f.snapshot, initialSnapshot); assert.equal(f.writes, 0);
+});
+
+test("楼长任命、姓名维护、换楼、撤任和删除实时投影，不修改手填配置或要求保持在线", async t => {
+  const f = await fixture(t, configured);
+  const original = fs.readFileSync(f.organizationFile, "utf8");
+  const first = await f.account("first-leader", "leader", ["第一楼"], 1);
+  await f.account("co-leader", "leader", ["第一楼"]);
+  const view = async () => (await f.request("/api/organization/settings", "GET", undefined, f.admin)).data.buildingLeaders;
+  assert.deepEqual(await view(), [{ building: "第一楼", leaders: "测试人员甲、co-leader测试账号" }]);
+  const own = await f.request("/api/data/snapshot.json", "GET", undefined, first);
+  own.data.employees.find(employee => employee.id === 1).name = "更新后的楼长姓名";
+  assert.equal((await f.request("/api/data/snapshot.json", "POST", own.data, first)).status, 200);
+  assert.deepEqual(await view(), [{ building: "第一楼", leaders: "更新后的楼长姓名、co-leader测试账号" }]);
+  assert.equal((await f.request("/api/auth/users", "POST", { username: "co-leader", name: "换楼后的楼长", buildings: ["第二楼"] }, f.admin)).status, 200);
+  assert.deepEqual(await view(), [{ building: "第一楼", leaders: "更新后的楼长姓名" }, { building: "第二楼", leaders: "换楼后的楼长" }]);
+  assert.equal((await f.request("/api/auth/users", "POST", { username: "first-leader", role: "user" }, f.admin)).status, 200);
+  assert.deepEqual(await view(), [{ building: "第二楼", leaders: "换楼后的楼长" }]);
+  assert.deepEqual((await f.request("/api/organization/settings", "GET", undefined, first)).data.buildingLeaders, []);
+  const replacement = await f.account("replacement", "leader", ["第一楼"], 2);
+  assert.deepEqual(await view(), [{ building: "第二楼", leaders: "换楼后的楼长" }, { building: "第一楼", leaders: "测试人员乙" }]);
+  assert.equal((await f.request("/api/auth/users/co-leader", "DELETE", {}, f.admin)).status, 200);
+  assert.equal((await f.request("/api/auth/logout", "POST", {}, replacement)).status, 200);
+  assert.deepEqual(await view(), [{ building: "第一楼", leaders: "测试人员乙" }]);
+  assert.equal(fs.readFileSync(f.organizationFile, "utf8"), original);
+  // Only the explicit profile edit writes business data; viewing/changing
+  // assignments never uploads a replacement personnel snapshot.
+  assert.equal(f.writes, 1);
+});
+
+test("手机号注册不能自报楼长，管理员授权后登录自动纳入名单且公开接口不泄露姓名", async t => {
+  const f = await fixture(t, configured);
+  const phone = "13800000003";
+  const registered = await f.request("/api/auth/register", "POST", {
+    phone, password, role: "leader", buildings: ["第一楼"],
+    employee: { name: "新注册楼长姓名", position: "楼长", building: "第一楼", role: "leader" }
+  });
+  assert.equal(registered.status, 201); assert.equal(registered.data.user.role, "user");
+  const view = async () => (await f.request("/api/organization/settings", "GET", undefined, f.admin)).data.buildingLeaders;
+  assert.deepEqual(await view(), []);
+  assert.equal((await f.request("/api/auth/users", "POST", { username: phone, role: "leader", buildings: ["第一楼"] }, registered.cookie)).status, 403);
+  const promoted = await f.request("/api/auth/users", "POST", { username: phone, role: "leader", buildings: ["第一楼"] }, f.admin);
+  assert.equal(promoted.status, 200);
+  const login = await f.request("/api/auth/login", "POST", { username: phone, password });
+  assert.equal(login.status, 200); assert.equal(login.data.user.role, "leader");
+  assert.deepEqual(await view(), [{ building: "第一楼", leaders: "新注册楼长姓名" }]);
+  assert.deepEqual((await f.request("/api/organization/settings", "GET", undefined, login.cookie)).data.buildingLeaders, [{ building: "第一楼", leaders: "新注册楼长姓名" }]);
+  const ordinary = await f.account("ordinary", "user", [], 2);
+  assert.deepEqual((await f.request("/api/organization/settings", "GET", undefined, ordinary)).data.buildingLeaders, []);
+  for (const cookie of ["", login.cookie, ordinary, f.admin]) {
+    const publicView = await f.request("/api/organization/options", "GET", undefined, cookie);
+    assert.equal(publicView.status, 200);
+    assert.doesNotMatch(JSON.stringify(publicView.data), /新注册楼长姓名|buildingLeaders|13800000003/);
+  }
+});
+
+test("同名人员按账号绑定分别任命，无姓名的旧账号不回退登录手机号", async t => {
+  const f = await fixture(t, configured, {
+    "13800000009": { role: "leader", employeeId: 9999, name: "", phone: "13800000009", buildings: ["第一楼"] },
+    "legacy-leader": { role: "leader", employeeId: 9998, name: "未绑定的账号姓名", buildings: ["第二楼"] }
+  });
+  const view = async () => (await f.request("/api/organization/settings", "GET", undefined, f.admin)).data.buildingLeaders;
+  assert.deepEqual(await view(), [{ building: "第二楼", leaders: "未绑定的账号姓名" }]);
+  assert.doesNotMatch(JSON.stringify(await view()), /13800000009|9999/);
+  const snapshot = await f.request("/api/data/snapshot.json", "GET", undefined, f.admin);
+  for (const employee of snapshot.data.employees) employee.name = "同名楼长";
+  assert.equal((await f.request("/api/data/snapshot.json", "POST", snapshot.data, f.admin)).status, 200);
+  await f.account("first-name", "leader", ["第一楼"], 1);
+  await f.account("second-name", "leader", ["第二楼"], 2);
+  assert.deepEqual(await view(), [{ building: "第二楼", leaders: "未绑定的账号姓名、同名楼长" }, { building: "第一楼", leaders: "同名楼长" }]);
+  assert.equal((await f.request("/api/auth/users", "POST", { username: "first-name", role: "user" }, f.admin)).status, 200);
+  assert.deepEqual(await view(), [{ building: "第二楼", leaders: "未绑定的账号姓名、同名楼长" }]);
 });
