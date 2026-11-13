@@ -55,11 +55,14 @@ test("注册须姓名手机号及密码，六个可选组织字段为空，不�
   assert.equal((await request("/api/auth/register", "POST", { phone: "13800000001", password, employee: {} })).status, 400);
   assert.equal((await request("/api/auth/register", "POST", { phone: "123", password, employee: { name: "同名测试" } })).status, 400);
   assert.equal((await request("/api/auth/register", "POST", { phone: "13800000001", password: "short", employee: { name: "同名测试" } })).status, 400);
-  const fields = { name: "同名测试", company: "", personAttribute: "", workAttribute: "", department: "", status: "", building: "" };
+  assert.equal((await request("/api/auth/register", "POST", { phone: "13800000001", password, employee: { name: "同名测试", employeeNo: 42 } })).status, 400);
+  const fields = { name: "同名测试", employeeNo: " 000042 ", company: "", personAttribute: "", workAttribute: "", department: "", status: "", building: "" };
   const registered = await request("/api/auth/register", "POST", { phone: "13800000001", password, role: "admin", buildings: ["楼栋A"], employee: { ...fields, role: "admin" } });
   assert.equal(registered.status, 201); assert.equal(registered.data.user.role, "user"); assert.deepEqual(registered.data.user.buildings, []);
   const own = await request("/api/data/snapshot.json", "GET", undefined, registered.cookie);
   assert.equal(own.data.employees.length, 1); assert.equal(own.data.employees[0].phone, "13800000001");
+  assert.equal(own.data.employees[0].employeeNo, "000042");
+  assert.equal(own.data.employees[0].id, registered.data.user.employeeId);
   for (const field of ["company", "personAttribute", "workAttribute", "department", "status", "building"]) assert.equal(own.data.employees[0][field], "");
   assert.equal(own.data.employees[0].role, undefined);
   assert.equal((await request("/api/auth/register", "POST", { phone: "13800000001", password, employee: fields })).status, 409);
@@ -68,13 +71,18 @@ test("注册须姓名手机号及密码，六个可选组织字段为空，不�
 test("同名账号按人员ID隔离，自己的资料可更新但不能改登录手机号", async () => {
   const second = await request("/api/auth/register", "POST", { phone: "13800000002", password, employee: { name: "同名测试" } });
   assert.equal(second.status, 201);
+  const secondOwn = (await request("/api/data/snapshot.json", "GET", undefined, second.cookie)).data;
+  assert.equal(secondOwn.employees[0].employeeNo, undefined);
   const firstCookie = await login("13800000001");
   const mine = (await request("/api/data/snapshot.json", "GET", undefined, firstCookie)).data;
   assert.equal(mine.employees.length, 1); assert.notEqual(mine.employees[0].id, second.data.user.employeeId);
   mine.employees[0].email = "test@example.com";
+  mine.employees[0].employeeNo = " 000043 ";
   assert.equal((await request("/api/data/snapshot.json", "POST", mine, firstCookie)).status, 200);
   const changed = (await request("/api/data/snapshot.json", "GET", undefined, firstCookie)).data;
   assert.equal(changed.employees[0].email, "test@example.com");
+  assert.equal(changed.employees[0].employeeNo, "000043");
+  assert.equal(changed.employees[0].id, mine.employees[0].id);
   changed.employees[0].phone = "13800000003";
   assert.equal((await request("/api/data/snapshot.json", "POST", changed, firstCookie)).status, 403);
   changed.employees[0].id = second.data.user.employeeId;
@@ -118,9 +126,10 @@ test("楼长只读写本楼栋，其他楼栋资料和记录在合并后仍保�
   assert.ok(!JSON.stringify(mine).includes("其他楼栋人员"));
   mine.employees[0].building = "楼栋B";
   assert.equal((await request("/api/data/snapshot.json", "POST", mine, leader)).status, 403);
-  mine.employees[0].building = "楼栋A"; mine.overtime[0].status = "approved";
+  mine.employees[0].building = "楼栋A"; mine.employees[0].employeeNo = " 000044 "; mine.overtime[0].status = "approved";
   assert.equal((await request("/api/data/snapshot.json", "POST", mine, leader)).status, 200);
   snapshot = (await request("/api/data/snapshot.json", "GET", undefined, admin)).data;
+  assert.equal(snapshot.employees.find(e => e.id === 1).employeeNo, "000044");
   assert.equal(snapshot.employees.find(e => e.id === 2).name, "楼栋B测试");
   assert.equal(snapshot.overtime.find(r => r.id === 2).status, "pending");
   assert.equal(snapshot.overtime.find(r => r.id === 1).status, "approved");
@@ -201,6 +210,29 @@ test("范围合并不接受普通用户新增人员，调休审批不能透支�
   const scope = scopedSnapshot(source, leader);
   scope.leaveRequests[0].status = "approved";
   assert.throws(() => mergeSnapshot(source, scope, leader), /超过可用余额/);
+});
+
+test("工号为可选文本，各角色保存时保留前导零、校验80字限制且不改变内部关联ID", () => {
+  const source = { ...emptySnapshot(), employees: [{ id: 1, name: "本人", phone: "13800000009", building: "楼栋A" }, { id: 2, name: "其他楼栋", building: "楼栋B", employeeNo: "B-0002" }], overtime: [{ id: 1, employeeId: 1, date: "2026-11-11", hours: 2, overtimeType: "fee", status: "pending" }] };
+  for (const user of [{ role: "admin" }, { role: "leader", employeeId: 1, buildings: ["楼栋A"] }, { role: "user", employeeId: 1, buildings: [] }]) {
+    const scope = scopedSnapshot(source, user);
+    scope.employees[0].employeeNo = " 000123 ";
+    const result = mergeSnapshot(source, scope, user);
+    assert.equal(result.employees.find(e => e.id === 1).employeeNo, "000123");
+    assert.equal(result.employees.find(e => e.id === 2).employeeNo, "B-0002");
+    assert.equal(result.overtime[0].employeeId, 1);
+    assert.equal(source.employees[0].employeeNo, undefined);
+    for (const invalid of [123, null, {}, "x".repeat(81)]) {
+      scope.employees[0].employeeNo = invalid;
+      assert.throws(() => mergeSnapshot(source, scope, user), error => error.status === 400);
+    }
+    scope.employees[0].employeeNo = "x".repeat(80);
+    assert.equal(mergeSnapshot(source, scope, user).employees.find(e => e.id === 1).employeeNo.length, 80);
+    scope.employees[0].employeeNo = "";
+    assert.equal(mergeSnapshot(source, scope, user).employees.find(e => e.id === 1).employeeNo, "");
+    delete scope.employees[0].employeeNo;
+    assert.equal(mergeSnapshot(source, scope, user).employees.find(e => e.id === 1).employeeNo, undefined);
+  }
 });
 
 test("管理员通过账号接口重设本人密码后返回新的有效会话", async () => {

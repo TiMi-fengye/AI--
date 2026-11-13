@@ -14,7 +14,7 @@ const SelfProfile = {
       return;
     }
     var fields = [
-      ['姓名', 'name'], ['手机号（登录账号）', 'phone'], ['性别', 'gender'], ['工作岗位', 'position'],
+      ['姓名', 'name'], ['工号', 'employeeNo'], ['手机号（登录账号）', 'phone'], ['性别', 'gender'], ['工作岗位', 'position'],
       ['人员性质', 'company'], ['人员属性', 'personAttribute'], ['工作属性', 'workAttribute'], ['部门', 'department'],
       ['状态', 'status'], ['区域', 'region'], ['机房', 'room'], ['楼栋', 'building'],
       ['邮箱', 'email'], ['入职日期', 'joinDate'], ['离职日期', 'leaveDate']

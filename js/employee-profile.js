@@ -38,7 +38,7 @@ const EmpProfile = {
     if (!emp) return;
     id=Number(emp.id);
     var hasResume=this._safeResumeData(emp.resumeData), hasProfile=!!emp.aiProfile, canEdit=Auth.canManageEmployee(id), canAnalyze=Auth.isAdmin()&&canEdit;
-    var fields={姓名:emp.name,性别:emp.gender,部门:emp.department,职位:emp.position,手机:emp.phone,区域:emp.region,机房:emp.room,楼栋:emp.building,邮箱:emp.email};
+    var fields={姓名:emp.name,工号:emp.employeeNo,性别:emp.gender,部门:emp.department,职位:emp.position,手机:emp.phone,区域:emp.region,机房:emp.room,楼栋:emp.building,邮箱:emp.email,入职日期:emp.joinDate};
     var html='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;">'+Object.keys(fields).map(function(label) {
       return '<div class="form-group"><label>'+Auth.escape(label)+'</label><div style="padding:8px 12px;border:1px solid var(--border);border-radius:8px;">'+Auth.escape(fields[label]||'-')+'</div></div>';
     }).join('')+'</div><hr><h4 style="margin:12px 0 8px;">简历附件</h4><div style="border:2px dashed var(--border);border-radius:12px;padding:16px;text-align:center;">'+

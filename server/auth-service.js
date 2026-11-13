@@ -9,7 +9,7 @@ const { isDeepStrictEqual } = require("node:util");
 const scrypt = promisify(crypto.scrypt);
 const COOKIE = "hr_session";
 const SESSION_MS = 12 * 60 * 60 * 1000;
-const PROFILE_FIELDS = ["name", "gender", "position", "company", "personAttribute", "workAttribute", "department", "status", "region", "room", "building", "phone", "email", "joinDate", "leaveDate", "aiProfile", "resumeData", "resumeName", "credentialData", "credentialName", "_resumeText"];
+const PROFILE_FIELDS = ["name", "employeeNo", "gender", "position", "company", "personAttribute", "workAttribute", "department", "status", "region", "room", "building", "phone", "email", "joinDate", "leaveDate", "aiProfile", "resumeData", "resumeName", "credentialData", "credentialName", "_resumeText"];
 const COLLECTIONS = ["employees", "attendance", "leaveRequests", "overtime", "settlements", "departments", "updateLogs", "performance"];
 const PHONE = /^1[3-9]\d{9}$/;
 const ORGANIZATION_OPTIONS = {
@@ -75,7 +75,7 @@ function profileData(input, allowed = PROFILE_FIELDS) {
   for (const field of allowed) {
     if (Object.prototype.hasOwnProperty.call(input, field)) {
       if (typeof input[field] !== "string") fail(400, "人员表单字段格式错误");
-      const max = field.endsWith("Data") ? 8 * 1024 * 1024 : (field === "_resumeText" || field === "aiProfile" ? 50000 : 1000);
+      const max = field === "employeeNo" ? 80 : (field.endsWith("Data") ? 8 * 1024 * 1024 : (field === "_resumeText" || field === "aiProfile" ? 50000 : 1000));
       if (input[field].length > max) fail(400, "人员表单字段内容过长");
       output[field] = input[field].trim();
     }
@@ -130,6 +130,7 @@ function mergeSnapshot(input, incoming, user) {
   if (user.role === "admin") {
     const next = normalizeSnapshot(incoming);
     validateRows(next.employees, "人员");
+    next.employees = next.employees.map(employee => ({ ...employee, ...profileData(employee, ["employeeNo"]) }));
     const ids = new Set(next.employees.map(e => e.id));
     for (const key of ["attendance", "overtime", "leaveRequests"]) validateRows(next[key], key, ids);
     for (const key of ["overtime", "leaveRequests"]) next[key].forEach(r => validateRequest(r, key));

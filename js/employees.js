@@ -135,7 +135,7 @@ const Employees = {
       // 筛选工具条
       '<div class="emp-filters" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 16px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#1e3a8a;font-size:13px;font-weight:600;margin-bottom:16px;">',
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">',
-          '<input type="text" class="form-control" id="empSearch" placeholder="搜索姓名" style="width:150px;" oninput="Employees.filter()">',
+          '<input type="text" class="form-control" id="empSearch" placeholder="搜索姓名、工号或岗位" style="width:190px;" oninput="Employees.filter()">',
           '<select class="form-control" id="empFilterPosition" style="width:140px;" onchange="Employees.filter()"><option value="">全部职位</option>' + this._options(positions, '') + '</select>',
           '<select class="form-control" id="empFilterGender" style="width:110px;" onchange="Employees.filter()"><option value="">全部性别</option><option value="男">男</option><option value="女">女</option></select>',
           '<select class="form-control" id="empFilterStatus" style="width:120px;" onchange="Employees.filter()"><option value="">全部状态</option>' + this._options(this._statusOptions, '') + '</select>',
@@ -151,16 +151,20 @@ const Employees = {
         '<div class="card-body" style="padding:0;">',
           '<div class="table-responsive"><table>',
             '<thead><tr>',
-              '<th style="width:56px;">编号</th>',
+              '<th style="min-width:100px;">工号</th>',
               '<th style="min-width:130px;">姓名</th>',
               '<th style="min-width:120px;">工作岗位</th>',
               '<th style="width:90px;">人员性质</th>',
               '<th style="width:56px;">性别</th>',
               '<th style="min-width:110px;">手机</th>',
+              '<th style="min-width:120px;">部门</th>',
+              '<th style="min-width:100px;">楼栋</th>',
+              '<th style="min-width:180px;">邮箱</th>',
+              '<th style="min-width:110px;">入职日期</th>',
               '<th style="width:80px;">状态</th>',
               '<th style="width:110px;">操作</th>',
             '</tr></thead>',
-            '<tbody id="empTableBody">' + (rows || '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">👤</div><p>暂无人员</p></div></td></tr>') + '</tbody>',
+            '<tbody id="empTableBody">' + (rows || '<tr><td colspan="12"><div class="empty-state"><div class="empty-icon">👤</div><p>暂无人员</p></div></td></tr>') + '</tbody>',
           '</table></div>',
         '</div>',
       '</div>'
@@ -181,10 +185,10 @@ const Employees = {
       : '<span class="tag' + (e.status === '在职' ? ' tag-success' : '') + '" style="font-size:11px;">' + self._escape(e.status) + '</span>';
 
     return '<tr class="emp-row"' + rowStyle +
-      ' data-name="' + self._escape(e.name) + '" data-pos="' + self._escape(e.position) +
+      ' data-name="' + self._escape(e.name) + '" data-employee-no="' + self._escape(e.employeeNo) + '" data-pos="' + self._escape(e.position) +
       '" data-id="' + e.id + '" data-gender="' + self._escape(e.gender) + '" data-status="' + self._escape(e.status) +
       '" data-building="' + self._escape(e.building) + '" data-company="' + self._escape(e.company) + '">' +
-      '<td style="font-size:12px;color:var(--text-light);">' + String(index + 1).padStart(3, '0') + '</td>' +
+      '<td style="font-size:12px;color:var(--text-light);overflow-wrap:anywhere;">' + (self._escape(e.employeeNo) || '未填写') + '</td>' +
       '<td>' +
         '<div style="display:flex;align-items:center;gap:10px;min-width:0;">' +
           '<span style="display:grid;flex:0 0 30px;width:30px;height:30px;place-items:center;border-radius:8px;color:#fff;font-size:13px;font-weight:700;background:' + self._avatarColor(e.name) + ';">' + self._escape((e.name || '?').charAt(0)) + '</span>' +
@@ -197,6 +201,10 @@ const Employees = {
       '<td style="font-size:12px;">' + (self._escape(e.company) || '-') + '</td>' +
       '<td>' + (self._escape(e.gender) || '-') + '</td>' +
       '<td style="font-size:13px;">' + (self._escape(e.phone) || '-') + '</td>' +
+      '<td style="font-size:13px;">' + (self._escape(e.department) || '-') + '</td>' +
+      '<td style="font-size:13px;">' + (self._escape(e.building) || '-') + '</td>' +
+      '<td style="font-size:13px;overflow-wrap:anywhere;">' + (self._escape(e.email) || '-') + '</td>' +
+      '<td style="font-size:13px;white-space:nowrap;">' + (self._escape(e.joinDate) || '-') + '</td>' +
       '<td>' + statusCell + '</td>' +
       '<td style="white-space:nowrap;">' +
         '<a href="javascript:;" style="color:#2563eb;font-size:13px;margin-right:10px;" onclick="Employees.showEditModal(' + e.id + ')">编辑</a>' +
@@ -220,7 +228,8 @@ const Employees = {
     document.querySelectorAll('.emp-row').forEach(function (row) {
       var name = (row.dataset.name || '').toLowerCase();
       var pos = (row.dataset.pos || '').toLowerCase();
-      var match = (!keyword || name.indexOf(keyword) >= 0 || pos.indexOf(keyword) >= 0)
+      var employeeNo = (row.dataset.employeeNo || '').toLowerCase();
+      var match = (!keyword || name.indexOf(keyword) >= 0 || employeeNo.indexOf(keyword) >= 0 || pos.indexOf(keyword) >= 0)
         && (!position || row.dataset.pos === position)
         && (!gender || row.dataset.gender === gender)
         && (!status || row.dataset.status === status)
@@ -286,6 +295,8 @@ const Employees = {
           ${registeredPhone ? '<small style="display:block;margin-top:6px;color:var(--text-light);font-size:12px;">登录号码请联系管理员在账号维护中处理。</small>' : ''}</div>
       </div>
       <div class="form-row">
+        <div class="form-group"><label for="empEmployeeNo">工号（选填）</label>
+          <input type="text" class="form-control" id="empEmployeeNo" value="${s._escape(e.employeeNo)}" placeholder="请输入工号" maxlength="80"></div>
         <div class="form-group"><label for="empEmail">邮箱</label>
           <input type="email" class="form-control" id="empEmail" value="${s._escape(e.email)}" placeholder="请输入邮箱"></div>
       </div>
@@ -537,6 +548,7 @@ const Employees = {
     var position = g('empPosition');
     var data = {
       name: name,
+      employeeNo: g('empEmployeeNo').trim(),
       gender: g('empGender'),
       position: position,
       company: g('empCompany'),
@@ -580,6 +592,7 @@ const Employees = {
     }
     var data = this.readFormData();
     if (!data.name) { App.toast('请输入姓名', 'error'); return; }
+    if (data.employeeNo.length > 80) { App.toast('工号不能超过80个字符', 'error'); return; }
     if (data.phone && !/^1[3-9]\d{9}$/.test(data.phone)) { App.toast('请输入有效的11位手机号', 'error'); return; }
     var emailInput = document.getElementById('empEmail');
     if (emailInput && !emailInput.checkValidity()) { emailInput.reportValidity(); return; }
