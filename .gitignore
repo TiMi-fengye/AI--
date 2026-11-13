@@ -6,6 +6,8 @@ server/repair-backup/
 server/*.log
 server/*.pid
 server/mysql.env
+server/sms.env
+deploy/sms.env
 
 # local build and generated archives
 .pptx-build/
@@ -18,3 +20,9 @@ mobile-deploy-*.zip
 .DS_Store
 Thumbs.db
 node_modules/
+
+# isolated local verification fixtures
+.sms-preview-*/
+.sms-engine-test-*/
+.hr-sms-auth-*/
+.hr-organization-recovery-*/

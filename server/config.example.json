@@ -21,5 +21,14 @@
     "endpoint": "https://api.deepseek.com/chat/completions",
     "model": "deepseek-chat",
     "apiKey": ""
+  },
+  "sms": {
+    "enabled": false,
+    "accessKeyId": "",
+    "accessKeySecret": "",
+    "securityToken": "",
+    "signName": "",
+    "templateCode": "",
+    "templateParamKey": "code"
   }
 }

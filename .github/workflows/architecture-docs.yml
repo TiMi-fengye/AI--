@@ -18,3 +18,15 @@ jobs:
           node-version: '20'
       - name: Verify architecture HTML is current
         run: node scripts/generate-architecture.cjs --check
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Run isolated regression tests without real SMS
+        env:
+          HR_SMS_ENABLED: 'false'
+          HR_NO_OPEN: '1'
+        run: node --test tests/*.test.js

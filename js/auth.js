@@ -3,6 +3,8 @@ const Auth = {
   _user: null,
   _users: {},
   setupRequired: false,
+  smsVerificationRequired: false,
+  smsConfigured: false,
 
   async request(path, options = {}) {
     const response = await fetch('/api/auth/' + path, {
@@ -10,15 +12,23 @@ const Auth = {
       headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
     });
     const data = await response.json();
-    if (!response.ok || data.ok === false) throw new Error(data.message || '请求失败，请重试');
+    if (!response.ok || data.ok === false) {
+      const error = new Error(data.message || '请求失败，请重试');
+      error.status = response.status;
+      const retryAfter = Number(data.retryAfter || (response.headers && response.headers.get('Retry-After')));
+      if (Number.isFinite(retryAfter) && retryAfter > 0) error.retryAfter = retryAfter;
+      throw error;
+    }
     return data;
   },
   async init() {
     const [session, status] = await Promise.all([this.request('session'), this.request('status')]);
     this._user = session.user || null;
     this.setupRequired = status.setupRequired === true;
+    this.smsVerificationRequired = status.smsVerificationRequired === true;
+    this.smsConfigured = status.smsConfigured === true;
     sessionStorage.removeItem('personnel_auth_session');
-    return { setupRequired: this.setupRequired, setupAllowed: status.setupAllowed === true, user: this._user };
+    return { setupRequired: this.setupRequired, setupAllowed: status.setupAllowed === true, smsVerificationRequired: this.smsVerificationRequired, smsConfigured: this.smsConfigured, user: this._user };
   },
   async _authenticate(path, body) {
     try {
@@ -28,8 +38,13 @@ const Auth = {
       return { success: true, user: data.user, message: '操作成功' };
     } catch (error) { return { success: false, message: error.message }; }
   },
-  login(username, password) { return this._authenticate('login', { username, password }); },
-  register(phone, password, employee) { return this._authenticate('register', { phone, password, employee }); },
+  _smsPayload(verification) {
+    if (!verification) return {};
+    return { smsCode: verification.smsCode, smsChallengeId: verification.smsChallengeId };
+  },
+  sendSmsCode(phone, purpose) { return this.request('sms-code', { method: 'POST', body: JSON.stringify({ phone, purpose }) }); },
+  login(username, password, verification) { return this._authenticate('login', { username, password, ...this._smsPayload(verification) }); },
+  register(phone, password, employee, verification) { return this._authenticate('register', { phone, password, employee, ...this._smsPayload(verification) }); },
   setupAdmin(password) { return this._authenticate('setup', { password }); },
   isLoggedIn() { return !!this._user; },
   currentUser() { return this._user; },

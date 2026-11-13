@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-12",
+  "updatedAt": "2026-11-13",
   "systemName": "人力资源管理系统",
   "organization": "华北一部 · 酒仙桥",
   "subtitle": "开发架构、技术栈与部署说明",
-  "businessBaseline": "2026-11-12 人员选项与楼栋配置修复版本",
+  "businessBaseline": "2026-11-12 线上基线；2026-11-13 短信开发完成、待启用",
   "introduction": "面向人员与运营团队的轻量级管理系统。围绕人员档案，连接组织、考勤、加班、请假、调休小时数与费用管理，并在服务端按管理员、楼长和普通人员限制数据范围。",
   "architecture": [
     {
@@ -29,7 +29,7 @@
     {
       "name": "认证与业务接口",
       "technology": "Node.js / Cookie session",
-      "description": "Node 内置 HTTP 服务托管页面；认证服务验证账号、会话、角色和数据范围，再处理快照读写。",
+      "description": "Node 内置 HTTP 服务托管页面；认证服务校验账号、会话和数据范围，短信开关启用后增加注册与手机号登录验证码校验。",
       "files": [
         "server/server.js",
         "server/auth-service.js"
@@ -37,8 +37,8 @@
     },
     {
       "name": "持久化与集成",
-      "technology": "MySQL / JSON / 飞书 API",
-      "description": "启用 MySQL 时保存共享业务快照；JSON 支持本地模式、初始化及灾备。账号和真实组织配置分别保存在受保护数据文件中。",
+      "technology": "MySQL / JSON / 阿里云短信 / 飞书 API",
+      "description": "业务、账号和组织配置分别持久化；飞书用于业务消息。阿里云短信适配器已开发，开通签名、模板及服务凭据后启用。",
       "files": [
         "server/package.json",
         "server/config.example.json"
@@ -94,6 +94,13 @@
       "version": "测试与文档生成使用 Node 内置模块",
       "purpose": "权限和注册回归测试、HTML 生成、发布备份和管理员初始化",
       "evidence": "tests/ / scripts/ / deploy/"
+    },
+    {
+      "layer": "短信验证",
+      "name": "Node.js crypto + Fetch / 阿里云 SendSms",
+      "version": "ACS3-HMAC-SHA256 / API 2017-05-25；默认未启用",
+      "purpose": "生成六位验证码、发送限流、用途绑定和一次性校验，无新增第三方依赖",
+      "evidence": "server/sms-verification.js / server/sms-aliyun.js"
     }
   ],
   "modules": [
@@ -104,8 +111,17 @@
         "js/auth.js",
         "server/auth-service.js"
       ],
-      "description": "手机号加密码注册登录；服务端保存账号，管理账号兼容 admin。",
+      "description": "手机号加密码注册登录；启用短信后须验证码。服务端保存账号，非手机号的管理员管理账号保留密码入口。",
       "scope": "全部角色"
+    },
+    {
+      "name": "短信验证码",
+      "files": [
+        "server/sms-verification.js",
+        "server/sms-aliyun.js"
+      ],
+      "description": "六位随机码、五分钟有效、一次性消费、用途隔离与持久化发送限额；签名和模板开通后启用。",
+      "scope": "已开发 / 默认关闭"
     },
     {
       "name": "导航与公共交互",
@@ -236,7 +252,8 @@
     "required": [
       "姓名",
       "11 位中国大陆手机号",
-      "密码与确认密码（至少 8 位）"
+      "密码与确认密码（至少 8 位）",
+      "短信验证码（短信开关启用后必填）"
     ],
     "optional": [
       "人员性质",
@@ -247,7 +264,7 @@
       "楼栋"
     ],
     "notes": [
-      "手机号加密码登录，目前没有接入短信验证码。",
+      "短信验证码已开发；开通服务并启用后生效，手机号登录仍需密码。",
       "注册同步创建人员档案；其他资料可后续在“我的资料”维护。",
       "相同手机号的旧人员档案由管理员关联，注册不会自动认领。",
       "管理员首次初始化需在服务器本机完成，密码至少 12 位；已初始化的服务器直接登录。",
@@ -284,6 +301,12 @@
       "location": "服务端内存 / 浏览器内存",
       "description": "会话通过 HttpOnly Cookie 关联；当前业务范围在浏览器内存保存，每次登录重新获取。服务器重启后重新登录。",
       "backup": "不将会话当作持久资料；业务以服务端确认的保存结果为准。"
+    },
+    {
+      "name": "短信发送配额",
+      "location": "实际 HR_DATA_DIR / sms-rate-limits.json",
+      "description": "持久化同手机号冷却、手机号/IP/系统发送限额，键为哈希。验证码及挑战仅在内存，重启失效，配额不随重启清空。",
+      "backup": "受保护文件权限600，随实际数据目录备份；不包含明文验证码、手机号或IP。"
     }
   ],
   "apis": [
@@ -291,19 +314,25 @@
       "method": "GET",
       "path": "/api/auth/status",
       "access": "公开状态",
-      "purpose": "返回认证服务及首次初始化状态，不返回业务资料"
+      "purpose": "返回初始化与短信启用/配置状态，不返回业务资料或凭据"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/sms-code",
+      "access": "短信已启用且配置有效；限流",
+      "purpose": "请求注册或登录验证码，只返回挑战ID、有效期和重发等待时间"
     },
     {
       "method": "POST",
       "path": "/api/auth/register",
       "access": "注册入口",
-      "purpose": "校验手机号、密码和人员表单，建立普通账号与档案"
+      "purpose": "校验人员表单与密码；启用短信时还校验注册验证码，成功后一次性消费"
     },
     {
       "method": "POST",
       "path": "/api/auth/login",
       "access": "登录入口",
-      "purpose": "验证服务端账号，签发会话 Cookie"
+      "purpose": "验证密码；手机号路径启用短信后还需登录验证码，成功签发Cookie"
     },
     {
       "method": "GET / POST",
@@ -366,7 +395,8 @@
     "Cookie 使用 HttpOnly、SameSite=Lax，有效期 12 小时；HTTPS 时附加 Secure。",
     "匿名业务快照返回 401；账号、配置和运行数据路径不对外提供。",
     "楼长和普通人员的读取与写入范围均在服务端校验。",
-    "本版本不具备短信验证、统一身份平台或多实例共享会话，扩展时需单独设计。"
+    "短信验证已开发、默认关闭；统一身份平台和多实例共享会话需另行扩展。",
+    "验证码仅以 HMAC 摘要保存在内存，API 和磁盘不返回明文；未配置短信时不能伪装发送成功。"
   ],
   "environment": [
     {
@@ -400,6 +430,10 @@
     {
       "name": "记录口径",
       "value": "2026-11-11 部署记录，版本值为参考，不是实时监控"
+    },
+    {
+      "name": "短信状态",
+      "value": "功能已开发，默认关闭；开通短信服务后启用"
     }
   ],
   "deploymentSteps": [
@@ -458,6 +492,11 @@
       "title": "公网状态验证",
       "language": "替换 YOUR_ECS_IP；认证状态与匿名业务边界",
       "code": "curl -sS http://YOUR_ECS_IP/api/auth/status\ncurl -sS -o /dev/null -w '%{http_code}\\n' http://YOUR_ECS_IP/api/data/snapshot.json"
+    },
+    {
+      "title": "短信专项回归",
+      "language": "模拟发送器与临时数据，不发送真实短信",
+      "code": "node --test tests/sms-*.test.js"
     }
   ],
   "releaseBoundary": "deploy/aliyun-2026-11-11.sh 是固定旧提交与 36 个文件的历史发布脚本，不包含本 HTML。本 HTML 可直接离线打开；如需通过网站访问，应使用新的发布提交与文件清单，并在 server/auth-service.js 的静态白名单中明确开放本 HTML 路径，再验证 HTTP 200。",
@@ -507,6 +546,10 @@
     {
       "path": "deploy/recover-organization-settings.py",
       "description": "从旧代码归档只提取静态选项和楼长配置，不执行旧代码、不覆盖现有设置"
+    },
+    {
+      "path": "技术文档/09-短信验证码接入.md",
+      "description": "短信配置模板、验证码流程、限流与正式启用条件"
     }
   ]
 }

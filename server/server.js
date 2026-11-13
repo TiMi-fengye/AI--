@@ -2,12 +2,18 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { createAuthService, staticFile, sendJson, writeAtomic } = require("./auth-service");
+const { createSmsVerification } = require("./sms-verification");
+const { createAliyunSmsSender } = require("./sms-aliyun");
 
 // 读取配置
 let CONFIG = { port: 8080, staticIP: "" };
 try {
   CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf-8"));
-} catch(e) {}
+  if (!CONFIG || typeof CONFIG !== "object" || Array.isArray(CONFIG)) throw new Error("Invalid server configuration");
+  if (CONFIG.sms !== undefined && (!CONFIG.sms || typeof CONFIG.sms !== "object" || Array.isArray(CONFIG.sms) || (CONFIG.sms.enabled !== undefined && typeof CONFIG.sms.enabled !== "boolean"))) throw new Error("Invalid SMS configuration");
+} catch (error) {
+  if (error.code !== "ENOENT") throw new Error("服务端配置无法读取，请检查配置文件及权限");
+}
 
 const PORT = Number(process.env.HR_PORT || CONFIG.port || 8080);
 const HOST = process.env.HR_HOST || CONFIG.staticIP || "0.0.0.0";
@@ -148,8 +154,27 @@ function cacheHeaders(ext) {
   return headers;
 }
 
+function smsSettings() {
+  const config = CONFIG.sms || {};
+  if (process.env.HR_SMS_ENABLED !== undefined && !/^(?:true|false)$/i.test(process.env.HR_SMS_ENABLED)) throw new Error("短信开关配置无效，请使用 true 或 false");
+  return {
+    enabled: String(process.env.HR_SMS_ENABLED || (config.enabled ? "true" : "false")).toLowerCase() === "true",
+    accessKeyId: process.env.HR_SMS_ACCESS_KEY_ID || config.accessKeyId || "",
+    accessKeySecret: process.env.HR_SMS_ACCESS_KEY_SECRET || config.accessKeySecret || "",
+    securityToken: process.env.HR_SMS_SECURITY_TOKEN || config.securityToken || "",
+    signName: process.env.HR_SMS_SIGN_NAME || config.signName || "",
+    templateCode: process.env.HR_SMS_TEMPLATE_CODE || config.templateCode || "",
+    templateParamKey: process.env.HR_SMS_TEMPLATE_PARAM_KEY || config.templateParamKey || "code"
+  };
+}
+const smsConfig = smsSettings();
+const smsVerification = createSmsVerification({
+  dataDir: DATA_DIR, enabled: smsConfig.enabled,
+  sendCode: createAliyunSmsSender(smsConfig)
+});
 const auth = createAuthService({
   dataDir: DATA_DIR,
+  smsVerification,
   readSnapshot: async () => {
     if (MYSQL_POOL) return readMySQLSnapshot();
     try { return JSON.parse(await fs.promises.readFile(snapshotFilePath(), "utf8")); }

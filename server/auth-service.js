@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { isIP } = require("node:net");
 const { promisify } = require("node:util");
 const { isDeepStrictEqual } = require("node:util");
 const scrypt = promisify(crypto.scrypt);
@@ -282,13 +283,14 @@ function organizationSettings(value) {
   }
   return result;
 }
-function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
+function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerification = null }) {
   const userFile = path.join(dataDir, "auth-users.json");
   const organizationFile = path.join(dataDir, "organization-settings.json");
   let users = Object.create(null);
   try { const data = JSON.parse(fs.readFileSync(userFile, "utf8")); for (const [key, user] of Object.entries(data)) users[key] = user; }
   catch (error) { if (error.code !== "ENOENT") throw new Error("账号文件无法读取，请检查备份和文件权限"); }
   const sessions = new Map(), attempts = new Map();
+  const sms = smsVerification || { required: false, configured: false };
   let queue = Promise.resolve();
   function serialized(action) { const task = queue.then(action); queue = task.catch(() => {}); return task; }
   function saveUsers() { writeAtomic(userFile, users); }
@@ -320,6 +322,24 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
   }
   function requireUser(req) { const user = getUser(req); if (!user) fail(401, "请先登录"); return user; }
   function requireAdmin(req) { const user = requireUser(req); if (user.role !== "admin") fail(403, "仅管理员可执行此操作"); return user; }
+  function smsAddress(req) {
+    const peer = String(req.socket.remoteAddress || "");
+    // Only the existing local reverse proxy is trusted. Its appended rightmost
+    // address cannot be replaced by an arbitrary client X-Forwarded-For prefix.
+    if (["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(peer)) {
+      const forwarded = String(req.headers["x-forwarded-for"] || "");
+      if (forwarded.length <= 512) {
+        const address = forwarded.split(",").pop().trim();
+        if (isIP(address)) return address;
+      }
+    }
+    return peer || "unknown";
+  }
+  function verifySms(phone, purpose, body) {
+    if (!sms.required) return null;
+    if (!sms.configured) fail(503, "短信服务尚未配置，请联系管理员");
+    return sms.verify({ phone, purpose, challengeId: body.smsChallengeId, code: body.smsCode });
+  }
   function readOrganization() {
     try { return organizationSettings(JSON.parse(fs.readFileSync(organizationFile, "utf8"))); }
     catch (error) {
@@ -384,7 +404,16 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
           writeAtomic(organizationFile, next);
         });
         sendJson(res, 200, { ok: true, ...(await organizationView(requireAdmin(req))) });
-      } else if (url === "/api/auth/status" && req.method === "GET") sendJson(res, 200, { ok: true, setupRequired: setupRequired(), setupAllowed: isLocalSetup(req) });
+      } else if (url === "/api/auth/status" && req.method === "GET") sendJson(res, 200, {
+        ok: true, setupRequired: setupRequired(), setupAllowed: isLocalSetup(req),
+        smsVerificationRequired: !!sms.required, smsConfigured: !!sms.configured
+      });
+      else if (url === "/api/auth/sms-code" && req.method === "POST") {
+        const body = await readJson(req, 4096);
+        if (!sms.required || !sms.configured) fail(503, "短信服务尚未配置，请联系管理员");
+        const result = await sms.requestCode({ phone: text(body.phone), purpose: body.purpose, ip: smsAddress(req) });
+        sendJson(res, 200, { ok: true, challengeId: result.challengeId, expiresIn: result.expiresIn, retryAfter: result.retryAfter });
+      }
       else if (url === "/api/auth/session" && req.method === "GET") sendJson(res, 200, { ok: true, user: getUser(req) });
       else if (url === "/api/auth/setup" && req.method === "POST") {
         if (!isLocalSetup(req)) fail(403, "请在服务器本机使用 localhost 完成管理员初始化");
@@ -412,6 +441,7 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
           if (Object.prototype.hasOwnProperty.call(users, phone) || Object.values(users).some(u => u.phone === phone)) fail(409, "该手机号已注册，请直接登录");
           const snapshot = normalizeSnapshot(await readSnapshot());
           if (snapshot.employees.some(e => e.phone === phone)) fail(409, "该手机号已有人员档案，请联系管理员绑定账号");
+          const smsTicket = verifySms(phone, "register", body);
           const password = await hashPassword(body.password);
           const id = Math.max(Date.now(), ...snapshot.employees.map(e => Number(e.id) + 1 || 1));
           const user = { name: employee.name, phone, employeeId: id, role: "user", buildings: [], passwordHash: password.hash, passwordSalt: password.salt, createdAt: new Date().toISOString() };
@@ -420,6 +450,7 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
           users[phone] = user;
           try { saveUsers(); await writeSnapshot(snapshot); }
           catch (error) { delete users[phone]; saveUsers(); throw error; }
+          if (smsTicket) sms.consume(smsTicket);
         });
         startSession(req, res, phone); sendJson(res, 201, { ok: true, user: publicUser(phone, users[phone]) });
       } else if (url === "/api/auth/login" && req.method === "POST") {
@@ -427,10 +458,22 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
         rateLimit(req, "login-total", 100);
         rateLimit(req, "login:" + username, 15);
         if (!username || typeof body.password !== "string" || body.password.length > 256 || username.length > 100) fail(400, "账号或密码格式错误");
-        const key = Object.prototype.hasOwnProperty.call(users, username) ? username : Object.keys(users).find(key => users[key].phone === username);
-        const user = key ? users[key] : null;
-        if (!(await validPassword(body.password, user))) fail(401, "手机号、账号或密码不正确");
-        startSession(req, res, key); sendJson(res, 200, { ok: true, user: publicUser(key, user) });
+        await serialized(async () => {
+          const key = Object.prototype.hasOwnProperty.call(users, username) ? username : Object.keys(users).find(key => users[key].phone === username);
+          const user = key ? users[key] : null;
+          if (!(await validPassword(body.password, user))) fail(401, "手机号、账号或密码不正确");
+          // A phone-bound ordinary/leader account cannot bypass SMS by using
+          // an old username alias. Non-phone administrator accounts retain
+          // their management login while the SMS service is being configured.
+          let smsTicket = null;
+          if (sms.required) {
+            if (PHONE.test(username)) smsTicket = verifySms(username, "login", body);
+            else if (user.role !== "admin") fail(400, "请使用绑定手机号和短信验证码登录");
+          }
+          startSession(req, res, key);
+          if (smsTicket) sms.consume(smsTicket);
+          sendJson(res, 200, { ok: true, user: publicUser(key, user) });
+        });
       } else if (url === "/api/auth/logout" && req.method === "POST") {
         const cookie = String(req.headers.cookie || "").split(";").map(part => part.trim()).find(part => part.startsWith(COOKIE + "="));
         if (cookie) sessions.delete(cookie.substring(COOKIE.length + 1));
@@ -556,7 +599,14 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot }) {
         });
         sendJson(res, 200, { ok: true, status: "ok", revision: result.revision, user: getUser(req) });
       } else sendJson(res, 405, { ok: false, message: "不支持的请求方式或接口" });
-    } catch (error) { sendJson(res, error.status || 500, { ok: false, status: "error", message: error.status ? error.message : "服务器处理失败，请稍后重试" }); }
+    } catch (error) {
+      const retryAfter = Number.isFinite(error.retryAfter) && error.retryAfter > 0 && error.retryAfter <= 86400 ? Math.ceil(error.retryAfter) : null;
+      if (retryAfter) res.setHeader("Retry-After", String(retryAfter));
+      sendJson(res, error.status || 500, {
+        ok: false, status: "error", message: error.status ? error.message : "服务器处理失败，请稍后重试",
+        ...(retryAfter ? { retryAfter } : {})
+      });
+    }
     return true;
   }
   return { handle, getUser, requireUser, requireAdmin, checkOrigin, serialized };

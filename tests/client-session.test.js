@@ -44,7 +44,7 @@ async function load(context) {
 }
 before(async () => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hr-client-tests-'));
-  process.env.HR_DATA_DIR = directory; process.env.HR_NO_OPEN = '1';
+  process.env.HR_DATA_DIR = directory; process.env.HR_NO_OPEN = '1'; process.env.HR_SMS_ENABLED = 'false';
   ({ server } = require('../server/server'));
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   base = 'http://127.0.0.1:' + server.address().port;
