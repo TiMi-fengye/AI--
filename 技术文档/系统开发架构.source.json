@@ -4,7 +4,7 @@
   "systemName": "人力资源管理系统",
   "organization": "华北一部 · 酒仙桥",
   "subtitle": "开发架构、技术栈与部署说明",
-  "businessBaseline": "2026-11-16 人员导出已上线；启动与传输性能优化已实现并通过测试，待生产发布；短信开发版未部署",
+  "businessBaseline": "2026-11-16 启动与传输性能优化已定向上线并验证gzip/304，保留人员导出、工号与动态楼长；短信开发版未部署",
   "introduction": "面向人员与运营团队的轻量级管理系统。围绕人员档案，连接组织、考勤、加班、请假、调休小时数与费用管理，并在服务端按管理员、楼长和普通人员限制数据范围。",
   "architecture": [
     {
@@ -27,7 +27,8 @@
         "deploy/apply-personnel-fields.py",
         "deploy/apply-organization-fix.py",
         "deploy/apply-dashboard-leaders.py",
-        "deploy/apply-personnel-export.py"
+        "deploy/apply-personnel-export.py",
+        "deploy/apply-startup-performance.py"
       ]
     },
     {
@@ -493,6 +494,10 @@
     {
       "name": "人员导出发布",
       "value": "2026-11-16 已通过独立定向脚本发布；用户报告 PERSONNEL_EXPORT_OK，公开代码摘要与匿名访问边界验证通过，短信开发版未部署"
+    },
+    {
+      "name": "性能发布验收",
+      "value": "固定83868e43a430652ab1cb8be4f3c18038c47df30f已执行，用户报告STARTUP_PERFORMANCE_OK；公开六文件gzip/ETag304和匿名访问边界通过。"
     }
   ],
   "deploymentSteps": [
@@ -510,7 +515,7 @@
     },
     {
       "title": "发布允许文件",
-      "description": "人员导出使用新的 deploy/apply-personnel-export.py，安装 js/employees.js、js/personnel-export.js、恢复的 SheetJS 0.20.3 及固定架构 HTML，并精确修补现网 index.html 入口及 auth-service.js 导出路由；库许可证随源码交付。保留工号、动态楼长、账号、组织配置和业务资料，不整体替换成短信开发版。"
+      "description": "当前性能更新使用 deploy/apply-startup-performance.py，精确修补现网server/auth/index/客户端auth，仅安装Store/App/Dashboard和固定HTML；保留已上线导出、SheetJS、权限、配置和业务数据，短信不随此次上线。"
     },
     {
       "title": "验收并保留记录",
@@ -558,7 +563,7 @@
       "code": "node --test tests/sms-*.test.js"
     }
   ],
-  "releaseBoundary": "人员信息导出生产代码固定为 103396ffb021dbf495dbd5cccbec6e342b22ea54，使用 deploy/apply-personnel-export.py 定向发布。安装 js/employees.js、js/personnel-export.js、官方 SheetJS 0.20.3、LICENSE-SheetJS.txt 与该提交的固定架构 HTML，并精确修补现网 index.html 入口及 auth-service.js 导出路由；保留工号、动态楼长、账号与组织配置，不整体部署或启用短信开发版。用户报告 PERSONNEL_EXPORT_OK，表示服务器脚本的备份、安装、启动及既有私有 JSON、配置和 MySQL 快照不变自检通过；这是用户提供的脚本结果，维护方没有读取真实账号、人员或业务文件。独立公开只读核对确认 index、employees、personnel-export、xlsx 四文件 HTTP 200 且逐字节摘要与审阅发布一致，入口按生产补丁候选核对，规范化 SHA-256 为 6ede49ad9b44801f9aedc8851db4735c141f0be6b5df0316d8a9ff768ad06bde。认证状态 200、ok=true、setupRequired=false；匿名导出、业务快照、组织设置 401；私有配置与账号路径 404。固定代码提交 GitHub Actions 成功（运行 43794212599）。完整回归 165 项、164 通过、0 失败、1 项 POSIX 测试在 Windows 跳过；后端新专项 8、前端新专项 15、旧生产补丁候选 HTTP 8、部署安全 5 项均通过，使用临时合成资料。没有实际导出真实人员或进行浏览器可视验收。后续验收记录与重新生成的 HTML 只更新本地和 GitHub，服务器保留本次固定提交的 HTML，不重复发布程序；架构页面仍未开放静态访问。介绍视频保持此前制作基线，不含新导出操作。此前工号固定提交 682e2e26a200729ddab9225f67a6cd2b6aaa8894、动态楼长固定提交 2af6d4711f67131de819d68f188008e53b7fa3b2 的历史发布与验收记录继续保留在部署手册和更新日志中。 同日追加的启动与传输性能更新目前待生产发布，使用独立 apply-startup-performance.py；精确修补现网 server/auth/index/客户端 auth，仅覆盖 Store/App/Dashboard 和固定架构 HTML，不整体覆盖短信开发版本。静态代码每次重验证，不会长期锁定旧版本；当前授权人员仍在每次登录从服务器读取，不新增人员持久缓存。",
+  "releaseBoundary": "当前生产性能版本固定为 83868e43a430652ab1cb8be4f3c18038c47df30f，使用 apply-startup-performance.py 定向修补server/auth/index/client-auth并安装Store/App/Dashboard及固定架构HTML，保留已上线人员导出和组织授权，不整体部署短信开发版本。用户报告STARTUP_PERFORMANCE_OK，代表脚本备份、代码安装、静态传输与原JSON/配置/MySQL快照不变自检通过；未读取真实人员或账号资料。独立公网核验index/auth/store/app/dashboard/xlsx六文件均200且解压前后源码摘要匹配，支持ETag与304，静态必须重验证；认证状态200正常、API保持no-store无ETag，匿名导出/快照/组织设置401，私有配置和账号路径404。SheetJS传输由951904字节降至335530字节，未变资源后续304不重复传主体；这些为公开资源实测，不代表整体登录加速倍数。完整回归188项187通过1跳过，生产兼容候选前端10和HTTP8通过，固定代码CI成功。未进行真实人员数据或浏览器可视验收。验收记录和重新生成的HTML仅更新本地/GitHub，服务器保持固定性能提交中的HTML，架构页面仍未开放静态URL；此前介绍视频保留原基线。人员导出固定提交103396ffb021dbf495dbd5cccbec6e342b22ea54的历史验收保留在当日记录和部署手册。",
   "maintenance": [
     {
       "title": "维护同一个文件",
