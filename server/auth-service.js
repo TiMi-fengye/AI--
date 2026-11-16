@@ -262,6 +262,37 @@ function organizationStrings(values, label) {
   if (!Array.isArray(values) || values.length > 1000 || values.some(value => typeof value !== "string" || value.length > 200)) fail(400, label + "选项格式无效");
   return [...new Set(values.map(value => value.trim()).filter(Boolean))];
 }
+const PERSONNEL_EXPORT_FIELDS = [
+  ["employeeNo", "工号"], ["name", "姓名"], ["gender", "性别"],
+  ["position", "工作岗位"], ["company", "人员性质"], ["personAttribute", "人员属性"],
+  ["workAttribute", "工作属性"], ["department", "部门"], ["status", "状态"],
+  ["region", "区域"], ["room", "机房"], ["building", "楼栋"],
+  ["phone", "手机号"], ["email", "邮箱"], ["joinDate", "入职日期"],
+  ["leaveDate", "离职日期"], ["aiProfile", "人员简介"], ["resumeName", "简历文件名"],
+  ["credentialName", "证件文件名"], ["_resumeText", "简历提取文本"]
+];
+function personnelExport(input, actor) {
+  const snapshot = normalizeSnapshot(input);
+  const fields = PERSONNEL_EXPORT_FIELDS.map(([key, label]) => ({ key, label }));
+  const buildings = actor.role === "leader" && Array.isArray(actor.buildings)
+    ? [...new Set(actor.buildings.filter(building => typeof building === "string" && building.trim()))] : [];
+  const rows = actor.role === "admin" ? snapshot.employees
+    : snapshot.employees.filter(employee => employee && typeof employee.building === "string" && employee.building.trim() && buildings.includes(employee.building));
+  const employees = rows.filter(employee => employee && typeof employee === "object" && !Array.isArray(employee)).map(employee => {
+    const result = { id: positiveId(employee.id) ? employee.id : null };
+    for (const { key } of fields) {
+      const value = employee[key];
+      // Export only scalar form values. Unknown and nested legacy metadata must
+      // never expose credentials or arbitrary business objects in the download.
+      result[key] = typeof value === "string" ? value
+        : typeof value === "number" && Number.isFinite(value) ? String(value)
+        : typeof value === "boolean" ? String(value) : "";
+    }
+    for (const key of ["resumeData", "credentialData"]) result[key] = typeof employee[key] === "string" ? employee[key] : "";
+    return result;
+  });
+  return { ok: true, generatedAt: new Date().toISOString(), scope: { role: actor.role, buildings }, fields, employees };
+}
 function organizationSettings(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || (value.schemaVersion !== undefined && value.schemaVersion !== 1)) fail(400, "组织配置格式无效");
   if (value.revision !== undefined && (!Number.isSafeInteger(value.revision) || value.revision < 0)) fail(400, "组织配置版本无效");
@@ -382,10 +413,20 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     return { schemaVersion: 1, revision: configured.revision, options, buildingLeaders: clone(buildingLeaders) };
   }
   async function handle(req, res, url) {
-    if (!(url.startsWith("/api/auth/") || url === "/api/data/snapshot.json" || url === "/api/organization/options" || url === "/api/organization/settings")) return false;
+    if (!(url.startsWith("/api/auth/") || url === "/api/data/snapshot.json" || url === "/api/organization/options" || url === "/api/organization/settings" || url === "/api/employees/export")) return false;
     try {
       checkOrigin(req);
-      if (url === "/api/organization/options" && req.method === "GET") {
+      if (url === "/api/employees/export" && req.method === "GET") {
+        const initialActor = requireUser(req);
+        if (!["admin", "leader"].includes(initialActor.role)) fail(403, "仅管理员和楼长可导出人员信息");
+        await queue;
+        const snapshot = await readSnapshot();
+        // A queue/read wait may outlive a changed assignment or deleted session.
+        // Use current server permissions, never client filters or cached roles.
+        const actor = requireUser(req);
+        if (!["admin", "leader"].includes(actor.role)) fail(403, "仅管理员和楼长可导出人员信息");
+        sendJson(res, 200, personnelExport(snapshot, actor));
+      } else if (url === "/api/organization/options" && req.method === "GET") {
         await queue;
         const view = await organizationView(getUser(req));
         sendJson(res, 200, { ok: true, options: view.options });

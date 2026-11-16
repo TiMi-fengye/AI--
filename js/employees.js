@@ -109,6 +109,7 @@ const Employees = {
         '<button class="btn btn-primary" onclick="Employees.showAddModal()">+ 添加人员</button>',
         '<button class="btn btn-outline" onclick="Employees.showImportModal()">📥 批量导入</button>',
         '<button class="btn btn-outline" onclick="Employees.downloadTemplate()">📄 生成模板</button>',
+        '<button class="btn btn-outline" onclick="PersonnelExport.showModal()">导出人员</button>',
         isLeader ? '' : '<button class="btn btn-outline" onclick="Employees.clearAll()" style="color:#ef4444;border-color:#fecaca;">🗑️ 清空人员</button>',
       '</div>',
 
