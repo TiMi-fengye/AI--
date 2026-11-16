@@ -32,3 +32,4 @@ node_modules/
 视频/**/*.mp4
 视频/**/封面.jpg
 __pycache__/
+.hr-http-performance-*/

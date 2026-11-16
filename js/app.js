@@ -63,13 +63,18 @@ const App = {
   currentPage: 'dashboard',
 
   async init() {
+    const sequence = this._initSequence = (this._initSequence || 0) + 1;
+    let identity = null;
+    const current = () => sequence === this._initSequence && (identity === null || identity === Store._organizationIdentity());
     try {
-    await Auth.init();
+    const authentication = await Auth.init();
+    if (authentication === null || !current()) return;
     // 未登录时拦截
     if (!Auth.isLoggedIn()) {
       window.location.href = 'login.html';
       return;
     }
+    identity = Store._organizationIdentity();
     // 首次迁移只由已验证管理员执行；每次进入均以服务端当前可见范围替换浏览器缓存。
     const legacy = !localStorage.getItem('personnel_data_owner') ? Store.exportSnapshot() : null;
     let legacyUsers = {};
@@ -77,31 +82,40 @@ const App = {
     if (legacy && (legacy.employees.length || Object.keys(legacyUsers).length)) {
       // 未迁移的旧浏览器资料先由本机服务受保护地备份，再清除共享浏览器缓存。
       await Auth.request('legacy-backup', { method: 'POST', body: JSON.stringify({ snapshot: legacy, users: legacyUsers }) });
+      if (!current()) return;
     }
     Store.clearSessionData();
-    await Store.restoreFromServer();
-    try { await Store.loadOrganizationSettings(); }
-    catch (error) { App.toast('组织配置读取失败：' + error.message, 'warning'); }
+    // Independent reads run together. The first dashboard consumes this exact
+    // organization response; subsequent entries/focus still request fresh data.
+    const organization = Store.loadOrganizationSettings().then(settings => !!settings, error => {
+      if (current()) App.toast('组织配置读取失败：' + error.message, 'warning');
+      return false;
+    });
+    const results = await Promise.all([Store.restoreFromServer(), organization]);
+    if (!current() || results[0] === false) return;
     Store._serverHydrating = true;
     try { Store.init(); } finally { Store._serverHydrating = false; }
     Store._serverSyncReady = true;
     if (Auth.isAdmin() && legacy && legacy.employees.length && !Store.getEmployees().length) {
       Store.importSnapshot(legacy);
       await Store.syncSnapshotToServer();
+      if (!current()) return;
     }
     localStorage.setItem('personnel_data_owner', Auth.currentUser().username);
     if (Auth.isAdmin() && Object.keys(legacyUsers).length) {
       const existing = await Auth.loadUsers();
+      if (!current()) return;
       for (const username of Object.keys(legacyUsers)) {
         const old = legacyUsers[username];
         if (existing[username] || !old.password || old.authType === 'wechat' || old.authType === 'feishu') continue;
         try { await Auth.saveUser({ username, password: old.password, name: old.name, role: old.role === 'admin' ? 'admin' : 'user', employeeId: old.employeeId }); }
         catch (_) { App.toast('部分旧账号未迁移，请在权限管理中重新开通', 'warning'); }
+        if (!current()) return;
       }
     }
     this._renderSidebar();
     this._clock();
-    this.navigate(Auth.isAdmin() || Auth.isLeader() ? 'dashboard' : 'profile');
+    this.navigate(Auth.isAdmin() || Auth.isLeader() ? 'dashboard' : 'profile', { organizationLoaded: results[1] });
     // 登录后更新界面
     Auth._updateUI();
     Store.setOperator(Auth.currentUser().name);
@@ -109,6 +123,7 @@ const App = {
     if (intro) intro.hidden = !Auth.isAdmin() && !Auth.isLeader();
     this._monthlyReminder();
     } catch (error) {
+      if (!current()) return;
       Store._serverSyncReady = false;
       const container = document.getElementById('pageContent');
       container.textContent = '加载失败：' + error.message;
@@ -322,7 +337,7 @@ const App = {
   },
 
   /** 页面导航 */
-    navigate(page) {
+    navigate(page, options) {
     if (!Auth.canAccessPage(page)) { App.toast('没有权限访问此页面', 'error'); return; }
     this.currentPage = page;
 
@@ -356,7 +371,7 @@ const App = {
       case 'hours': MyHours.render(container); break;
       case 'leave': Leave.render(container); break;
       case 'overtime': Overtime.render(container); break;
-      case 'dashboard': try{Dashboard.render(container);}catch(e){console.error('Dashboard.render:',e);App.toast('数据看板加载失败','error');} break;
+      case 'dashboard': try{Dashboard.render(container, options);}catch(e){console.error('Dashboard.render:',e);App.toast('数据看板加载失败','error');} break;
       case 'employees': try{Employees.render(container);}catch(e){console.error('Employees.render:',e);App.toast('人力资源加载失败','error');} break;
       case 'attendance': try{Attendance.render(container);}catch(e){console.error('Attendance.render:',e);App.toast('考勤管理加载失败','error');} break;
 

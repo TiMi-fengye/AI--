@@ -8,6 +8,8 @@ const Store = {
   _syncPromise: null,
   _writeVersion: 0,
   _syncedVersion: 0,
+  _sessionEpoch: 0,
+  _snapshotLoadSequence: 0,
   _lastServerSnapshot: null,
   _data: Object.create(null),
   _memoryOnly: false,
@@ -55,7 +57,7 @@ const Store = {
     return user ? JSON.stringify([user.username, user.role, user.employeeId, user.buildings || []]) : '';
   },
   getOrganizationSettings() {
-    const result = this._organizationSettings ? JSON.parse(JSON.stringify(this._organizationSettings)) : { schemaVersion: 1, options: {}, buildingLeaders: [] };
+    const result = this._organizationSettings ? this._cloneJsonValue(this._organizationSettings) : { schemaVersion: 1, options: {}, buildingLeaders: [] };
     result.buildingLeaders = this.getBuildingLeaders();
     if (typeof Auth !== 'undefined' && Auth.isLeader()) result.options.buildings = this.getPersonnelOptions('buildings');
     return result;
@@ -112,12 +114,38 @@ const Store = {
     this._updateStats();
   },
 
+  // Copy JSON containers, not the bytes of immutable strings such as attachments.
+  // Callers still receive detached arrays/objects and must explicitly set updates.
+  _cloneJsonValue(value, ancestors) {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'undefined' || typeof value === 'function' || typeof value === 'symbol') return undefined;
+    if (typeof value === 'bigint') throw new TypeError('业务数据不能包含 BigInt');
+    if (typeof value.toJSON === 'function') value = value.toJSON();
+    if (value === null || typeof value !== 'object') return this._cloneJsonValue(value, ancestors);
+    const parents = ancestors || new Set();
+    if (parents.has(value)) throw new TypeError('业务数据不能包含循环引用');
+    parents.add(value);
+    try {
+      if (Array.isArray(value)) return Array.from(value, item => { const result = this._cloneJsonValue(item, parents); return result === undefined ? null : result; });
+      const result = {};
+      for (const key of Object.keys(value)) {
+        const item = this._cloneJsonValue(value[key], parents);
+        if (item !== undefined) Object.defineProperty(result, key, { value: item, enumerable: true, writable: true, configurable: true });
+      }
+      return result;
+    } finally { parents.delete(value); }
+  },
   get(key) {
-    if (this._memoryOnly && this._isServerDataKey(key)) return this._data[key] == null ? null : JSON.parse(JSON.stringify(this._data[key]));
+    if (this._memoryOnly && this._isServerDataKey(key)) return this._data[key] == null ? null : this._cloneJsonValue(this._data[key]);
     try { const raw = localStorage.getItem(this._namespace + key); return raw ? JSON.parse(raw) : null; } catch(e) { return null; }
   },
   set(key, value) {
-    if (this._memoryOnly && this._isServerDataKey(key)) this._data[key] = JSON.parse(JSON.stringify(value));
+    if (this._memoryOnly && this._isServerDataKey(key)) {
+      const copy = this._cloneJsonValue(value);
+      if (copy === undefined) throw new TypeError('业务数据格式无效');
+      this._data[key] = copy;
+    }
     else localStorage.setItem(this._namespace + key, JSON.stringify(value));
     if (this._serverSyncReady && !this._serverHydrating && this._isServerDataKey(key)) { this._writeVersion++; this._queueServerSync(); }
   },
@@ -148,9 +176,13 @@ const Store = {
     if (this._serverSyncTimer) { clearTimeout(this._serverSyncTimer); this._serverSyncTimer = null; }
     if (this._syncPromise) return this._syncPromise;
     if (this._syncedVersion >= this._writeVersion) return true;
+    const epoch = this._sessionEpoch;
+    const identity = this._organizationIdentity();
+    const current = () => epoch === this._sessionEpoch && identity === this._organizationIdentity();
     this._syncPromise = (async () => {
       try {
         while (this._syncedVersion < this._writeVersion) {
+          if (!current()) throw new Error('登录状态已变化，请重新登录后重试');
           const version = this._writeVersion;
           const snapshot = this.exportSnapshot();
           const response = await fetch('/api/data/snapshot.json', {
@@ -158,6 +190,7 @@ const Store = {
             headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(snapshot)
           });
           const data = await response.json();
+          if (!current()) throw new Error('登录状态已变化，请重新登录后重试');
           if (!response.ok || data.ok === false || data.status === 'error') throw new Error(data.message || '保存失败，请重试');
           if (data.user && typeof Auth !== 'undefined') { Auth._user = data.user; Auth._updateUI(); }
           this._lastServerSnapshot = snapshot;
@@ -166,13 +199,14 @@ const Store = {
         }
         return true;
       } catch (error) {
+        if (!current()) throw error;
         // 撤回被服务器拒绝的乐观更新，避免重试时重复提交申请。
         try { await this.restoreFromServer(); } catch (_) {
           if (this._lastServerSnapshot) this._hydrate(this._lastServerSnapshot);
         }
         this._syncedVersion = this._writeVersion;
         throw error;
-      } finally { this._syncPromise = null; }
+      } finally { if (epoch === this._sessionEpoch) this._syncPromise = null; }
     })();
     return this._syncPromise;
   },
@@ -183,8 +217,14 @@ const Store = {
     finally { this._serverHydrating = false; }
   },
   async restoreFromServer() {
+    const sequence = ++this._snapshotLoadSequence;
+    const epoch = this._sessionEpoch;
+    const identity = this._organizationIdentity();
+    const current = () => epoch === this._sessionEpoch && sequence === this._snapshotLoadSequence && identity === this._organizationIdentity();
     const response = await fetch('/api/data/snapshot.json', { cache: 'no-store', credentials: 'same-origin' });
+    if (!current()) return false;
     const payload = await response.json();
+    if (!current()) return false;
     if (!response.ok || payload.ok === false) throw new Error(payload.message || '服务器数据读取失败');
     const snapshot = payload && Array.isArray(payload.employees) ? payload : { employees: [] };
     this._hydrate(snapshot);
@@ -193,7 +233,10 @@ const Store = {
     return true;
   },
   clearSessionData() {
+    this._sessionEpoch++;
+    this._snapshotLoadSequence++;
     this._serverSyncReady = false;
+    this._syncPromise = null;
     if (this._serverSyncTimer) clearTimeout(this._serverSyncTimer);
     this._serverSyncTimer = null;
     this._writeVersion = this._syncedVersion = 0;
@@ -218,6 +261,13 @@ const Store = {
 
   /* ===== 操作人 ===== */
   getEmployees() { return this.get("employees") || []; },
+
+  // Read only one immutable field for access checks; never clone all attachments.
+  getEmployeeBuilding(id) {
+    const employees = this._memoryOnly ? this._data.employees || [] : this.getEmployees();
+    const employee = employees.find(item => String(item.id) === String(id));
+    return employee && typeof employee.building === 'string' ? employee.building : null;
+  },
 
   _nextId(rows) { return rows.reduce(function(id, row) { return Math.max(id, Number(row.id || 0) + 1); }, Date.now()); },
 

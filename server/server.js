@@ -1,7 +1,10 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { createAuthService, staticFile, sendJson, writeAtomic } = require("./auth-service");
+const { createAuthService, staticFile, sendJson, writeAtomic, acceptsGzip } = require("./auth-service");
+const crypto = require("node:crypto");
+const zlib = require("node:zlib");
+const gzipStatic = require("node:util").promisify(zlib.gzip);
 const { createSmsVerification } = require("./sms-verification");
 const { createAliyunSmsSender } = require("./sms-aliyun");
 
@@ -142,16 +145,63 @@ const MIME = {
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
-// 代码类文件一律禁用缓存，保证前端更新立即生效
-const NO_CACHE_EXT = [".html", ".js", ".css", ".json"];
-function cacheHeaders(ext) {
-  const headers = {};
-  if (NO_CACHE_EXT.indexOf(ext) >= 0) {
-    headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0";
-    headers["Pragma"] = "no-cache";
-    headers["Expires"] = "0";
+// Public resources may reuse bytes only after validation. Date query strings
+// are not immutable content hashes: a changed file must be visible immediately.
+const STATIC_CACHE_MAX_ENTRIES = 64;
+const STATIC_CACHE_MAX_BYTES = 16 * 1024 * 1024;
+const staticCache = new Map();
+const staticLoads = new Map();
+let staticCacheBytes = 0;
+function cacheHeaders(resource, compressed) {
+  return { "Cache-Control": "public, max-age=0, must-revalidate", Vary: "Accept-Encoding",
+    ETag: compressed ? resource.gzipEtag : resource.etag, "Last-Modified": resource.modified };
+}
+function cacheStatic(file, resource) {
+  const old = staticCache.get(file);
+  if (old) { staticCacheBytes -= old.bytes; staticCache.delete(file); }
+  if (resource.bytes > STATIC_CACHE_MAX_BYTES) return;
+  staticCache.set(file, resource); staticCacheBytes += resource.bytes;
+  while (staticCache.size > STATIC_CACHE_MAX_ENTRIES || staticCacheBytes > STATIC_CACHE_MAX_BYTES) {
+    const oldest = staticCache.keys().next().value;
+    staticCacheBytes -= staticCache.get(oldest).bytes;
+    staticCache.delete(oldest);
   }
-  return headers;
+}
+async function loadStatic(file, ext) {
+  const info = await fs.promises.stat(file, { bigint: true });
+  if (!info.isFile()) { const error = new Error("Not a file"); error.code = "ENOENT"; throw error; }
+  const stamp = String(info.size) + ":" + String(info.mtimeNs) + ":" + String(info.ctimeNs);
+  const cached = staticCache.get(file);
+  if (cached && cached.stamp === stamp) {
+    staticCache.delete(file); staticCache.set(file, cached);
+    return cached;
+  }
+  const pending = staticLoads.get(file);
+  if (pending && pending.stamp === stamp) return pending.promise;
+  const promise = (async () => {
+    const data = await fs.promises.readFile(file);
+    let compressed = null;
+    if (data.length >= 1024 && [".html", ".js", ".css", ".json", ".txt"].includes(ext)) {
+      try { compressed = await gzipStatic(data, { level: 6 }); }
+      catch (_) { console.warn("Static response compression failed; using the original response"); }
+    }
+    const etag = '"' + crypto.createHash("sha256").update(data).digest("hex") + '"';
+    const gzipEtag = compressed ? '"' + crypto.createHash("sha256").update(compressed).digest("hex") + '"' : null;
+    const resource = { stamp, data, compressed, etag, gzipEtag, modified: info.mtime.toUTCString(), bytes: data.length + (compressed ? compressed.length : 0) };
+    cacheStatic(file, resource);
+    return resource;
+  })();
+  // Bound both stored resources and in-flight deduplication metadata. Actual
+  // file authorization still comes solely from staticFile's public allowlist.
+  if (staticLoads.size < STATIC_CACHE_MAX_ENTRIES) staticLoads.set(file, { stamp, promise });
+  try { return await promise; }
+  finally { if (staticLoads.get(file)?.promise === promise) staticLoads.delete(file); }
+}
+function matchesStaticEtag(value, etag) {
+  return typeof value === "string" && value.split(",").some(item => {
+    const tag = item.trim();
+    return tag === "*" || tag.replace(/^W\//, "") === etag;
+  });
 }
 
 function smsSettings() {
@@ -258,11 +308,24 @@ const server = http.createServer(async (req, res) => {
   const fp = staticFile(ROOT, url);
   if (!fp) { res.writeHead(404); res.end("Not Found"); return; }
   const ext = path.extname(fp).toLowerCase();
-  fs.readFile(fp, (err, data) => {
-    if (err) { res.writeHead(404); res.end("Not Found"); return; }
-    res.writeHead(200, { "Content-Type": MIME[ext] || "application/octet-stream", "X-Content-Type-Options": "nosniff", ...cacheHeaders(ext) });
+  try {
+    const resource = await loadStatic(fp, ext);
+    if (res.destroyed || res.writableEnded) return;
+    const compressed = !!resource.compressed && acceptsGzip(req.headers["accept-encoding"]);
+    const data = compressed ? resource.compressed : resource.data;
+    const headers = { "Content-Type": MIME[ext] || "application/octet-stream", "X-Content-Type-Options": "nosniff", ...cacheHeaders(resource, compressed), ...(compressed ? { "Content-Encoding": "gzip" } : {}) };
+    if (matchesStaticEtag(req.headers["if-none-match"], headers.ETag)) {
+      res.writeHead(304, headers); res.end(); return;
+    }
+    res.writeHead(200, { ...headers, "Content-Length": data.length });
     res.end(req.method === "HEAD" ? undefined : data);
-  });
+  } catch (error) {
+    if (res.destroyed || res.writableEnded || res.headersSent) return;
+    const missing = ["ENOENT", "ENOTDIR", "EISDIR"].includes(error.code);
+    if (!missing) console.warn("Public static resource could not be read");
+    res.writeHead(missing ? 404 : 500, { "Cache-Control": "no-store" });
+    res.end(req.method === "HEAD" ? undefined : missing ? "Not Found" : "Resource unavailable");
+  }
 });
 
 async function startServer() {

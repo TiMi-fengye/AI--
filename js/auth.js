@@ -2,6 +2,7 @@
 const Auth = {
   _user: null,
   _users: {},
+  _sessionSequence: 0,
   setupRequired: false,
   smsVerificationRequired: false,
   smsConfigured: false,
@@ -22,7 +23,9 @@ const Auth = {
     return data;
   },
   async init() {
+    const sequence = ++this._sessionSequence;
     const [session, status] = await Promise.all([this.request('session'), this.request('status')]);
+    if (sequence !== this._sessionSequence) return null;
     this._user = session.user || null;
     this.setupRequired = status.setupRequired === true;
     this.smsVerificationRequired = status.smsVerificationRequired === true;
@@ -31,8 +34,10 @@ const Auth = {
     return { setupRequired: this.setupRequired, setupAllowed: status.setupAllowed === true, smsVerificationRequired: this.smsVerificationRequired, smsConfigured: this.smsConfigured, user: this._user };
   },
   async _authenticate(path, body) {
+    const sequence = ++this._sessionSequence;
     try {
       const data = await this.request(path, { method: 'POST', body: JSON.stringify(body) });
+      if (sequence !== this._sessionSequence) return { success: false, message: '登录状态已变化，请重试' };
       this._user = data.user;
       this._users = {};
       return { success: true, user: data.user, message: '操作成功' };
@@ -55,6 +60,10 @@ const Auth = {
     if (!this._user) return false;
     if (this.isAdmin()) return true;
     if (this.isLeader()) {
+      if (typeof Store.getEmployeeBuilding === 'function') {
+        const building = Store.getEmployeeBuilding(id);
+        return !!building && this.leaderBuildings().includes(building);
+      }
       const employee = Store.getEmployees().find(e => String(e.id) === String(id));
       return !!employee && this.leaderBuildings().includes(employee.building || '');
     }
@@ -72,11 +81,14 @@ const Auth = {
     return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
   },
   async logout() {
+    const sequence = ++this._sessionSequence;
     if (typeof Store !== 'undefined' && Store._serverSyncReady) {
       try { await Store.flushServerSync(); } catch (_) { /* 保存失败已撤回，退出仍需清除服务端会话。 */ }
     }
+    if (sequence !== this._sessionSequence) return;
     try {
       await this.request('logout', { method: 'POST', body: '{}' });
+      if (sequence !== this._sessionSequence) return;
       this._user = null;
       this._users = {};
       if (typeof Store !== 'undefined') Store.clearSessionData();

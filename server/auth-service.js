@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const zlib = require("node:zlib");
 const { isIP } = require("node:net");
 const { promisify } = require("node:util");
 const { isDeepStrictEqual } = require("node:util");
@@ -205,9 +206,48 @@ function mergeSnapshot(input, incoming, user) {
   next.revision = current.revision + 1;
   return next;
 }
+function acceptsGzip(value) {
+  if (typeof value !== "string") return false;
+  let explicit = null, wildcard = null;
+  for (const entry of value.toLowerCase().split(",")) {
+    const parts = entry.trim().split(";").map(part => part.trim());
+    if (!["gzip", "*"].includes(parts[0])) continue;
+    let quality = 1;
+    if (parts.length > 1) {
+      const match = parts.length === 2 && /^q=(0(?:\.\d{0,3})?|1(?:\.0{0,3})?)$/.exec(parts[1]);
+      quality = match ? Number(match[1]) : 0;
+    }
+    if (parts[0] === "gzip") explicit = explicit === null ? quality : Math.min(explicit, quality);
+    else wildcard = wildcard === null ? quality : Math.min(wildcard, quality);
+  }
+  return (explicit === null ? wildcard : explicit) > 0;
+}
+let jsonGzipInFlight = 0;
 function sendJson(res, status, value) {
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
-  res.end(JSON.stringify(value));
+  if (res.destroyed || res.writableEnded) return;
+  const body = JSON.stringify(value);
+  const vary = String(res.getHeader && res.getHeader("Vary") || "").split(",").map(item => item.trim()).filter(Boolean);
+  if (!vary.some(item => item === "*" || item.toLowerCase() === "accept-encoding")) vary.push("Accept-Encoding");
+  const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", Vary: vary.join(", ") };
+  // Authentication and role-scoped business responses never receive validators
+  // or enter the shared static cache, even when their wire body is compressed.
+  if (typeof res.removeHeader === "function") { res.removeHeader("ETag"); res.removeHeader("Last-Modified"); }
+  const finish = (data, compressed) => {
+    if (res.destroyed || res.writableEnded || res.headersSent) return;
+    res.writeHead(status, { ...headers, ...(compressed ? { "Content-Encoding": "gzip" } : {}), "Content-Length": Buffer.byteLength(data) });
+    res.end(res.req && res.req.method === "HEAD" ? undefined : data);
+  };
+  if (Buffer.byteLength(body) < 1024 || !acceptsGzip(res.req && res.req.headers["accept-encoding"]) || jsonGzipInFlight >= 4) {
+    finish(body, false); return;
+  }
+  jsonGzipInFlight++;
+  zlib.gzip(body, { level: zlib.constants.Z_BEST_SPEED }, (error, compressed) => {
+    jsonGzipInFlight--;
+    if (error) {
+      console.warn("JSON response compression failed; using the original response");
+      finish(body, false);
+    } else finish(compressed, true);
+  });
 }
 function readJson(req, limit = 20 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
@@ -667,4 +707,4 @@ function staticFile(root, requestPath) {
   return file.startsWith(path.resolve(root) + path.sep) ? file : null;
 }
 
-module.exports = { createAuthService, emptySnapshot, scopedSnapshot, mergeSnapshot, staticFile, readJson, sendJson, writeAtomic, HttpError };
+module.exports = { createAuthService, emptySnapshot, scopedSnapshot, mergeSnapshot, staticFile, readJson, sendJson, writeAtomic, HttpError, acceptsGzip };

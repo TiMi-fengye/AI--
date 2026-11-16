@@ -1,6 +1,6 @@
 const Dashboard = {
   _employees() { return Store.getEmployees().filter(function (employee) { return Auth.canAccessEmployee(employee.id); }); },
-  render(container) {
+  render(container, options) {
     if (!Auth.canAccessPage('dashboard')) { container.textContent = '无权查看数据看板'; return; }
     var stats = Store.getStats();
     var employees = this._employees();
@@ -50,7 +50,7 @@ const Dashboard = {
       this._updateLogCard(monthLogs, lateCount)
     ].join("") + '</div>';
     this._bindLeaderRefresh();
-    this.refreshBuildingLeaders();
+    if (!options || !options.organizationLoaded || Store.getBuildingLeadersStatus() !== 'ready') this.refreshBuildingLeaders();
   },
 
   _bindLeaderRefresh() {
