@@ -4,7 +4,7 @@
   "systemName": "人力资源管理系统",
   "organization": "华北一部 · 酒仙桥",
   "subtitle": "开发架构、技术栈与部署说明",
-  "businessBaseline": "2026-11-16 启动与传输性能优化已定向上线并验证gzip/304，保留人员导出、工号与动态楼长；短信开发版未部署",
+  "businessBaseline": "2026-11-16 性能与人员导出已上线；调休请假分类弹窗已实现，待无重启静态发布；短信开发版未部署",
   "introduction": "面向人员与运营团队的轻量级管理系统。围绕人员档案，连接组织、考勤、加班、请假、调休小时数与费用管理，并在服务端按管理员、楼长和普通人员限制数据范围。",
   "architecture": [
     {
@@ -171,7 +171,7 @@
         "js/leave.js",
         "js/overtime.js"
       ],
-      "description": "考勤、请假、加班申请与审批；普通人员只提交和查看自己的申请。",
+      "description": "考勤、请假、加班申请与审批；普通人员只提交和查看自己的申请。 调休申请按所选人员的可用余额提醒：无余额的420人员走ERP年假/带薪病假，其他人员联系楼长走所属平台；有余额提醒发送邮件走审批，超额与系统审批校验保留。",
       "scope": "按人员 / 楼栋过滤"
     },
     {
@@ -563,7 +563,7 @@
       "code": "node --test tests/sms-*.test.js"
     }
   ],
-  "releaseBoundary": "当前生产性能版本固定为 83868e43a430652ab1cb8be4f3c18038c47df30f，使用 apply-startup-performance.py 定向修补server/auth/index/client-auth并安装Store/App/Dashboard及固定架构HTML，保留已上线人员导出和组织授权，不整体部署短信开发版本。用户报告STARTUP_PERFORMANCE_OK，代表脚本备份、代码安装、静态传输与原JSON/配置/MySQL快照不变自检通过；未读取真实人员或账号资料。独立公网核验index/auth/store/app/dashboard/xlsx六文件均200且解压前后源码摘要匹配，支持ETag与304，静态必须重验证；认证状态200正常、API保持no-store无ETag，匿名导出/快照/组织设置401，私有配置和账号路径404。SheetJS传输由951904字节降至335530字节，未变资源后续304不重复传主体；这些为公开资源实测，不代表整体登录加速倍数。完整回归188项187通过1跳过，生产兼容候选前端10和HTTP8通过，固定代码CI成功。未进行真实人员数据或浏览器可视验收。验收记录和重新生成的HTML仅更新本地/GitHub，服务器保持固定性能提交中的HTML，架构页面仍未开放静态URL；此前介绍视频保留原基线。人员导出固定提交103396ffb021dbf495dbd5cccbec6e342b22ea54的历史验收保留在当日记录和部署手册。",
+  "releaseBoundary": "当前生产性能版本固定为 83868e43a430652ab1cb8be4f3c18038c47df30f，使用 apply-startup-performance.py 定向修补server/auth/index/client-auth并安装Store/App/Dashboard及固定架构HTML，保留已上线人员导出和组织授权，不整体部署短信开发版本。用户报告STARTUP_PERFORMANCE_OK，代表脚本备份、代码安装、静态传输与原JSON/配置/MySQL快照不变自检通过；未读取真实人员或账号资料。独立公网核验index/auth/store/app/dashboard/xlsx六文件均200且解压前后源码摘要匹配，支持ETag与304，静态必须重验证；认证状态200正常、API保持no-store无ETag，匿名导出/快照/组织设置401，私有配置和账号路径404。SheetJS传输由951904字节降至335530字节，未变资源后续304不重复传主体；这些为公开资源实测，不代表整体登录加速倍数。完整回归188项187通过1跳过，生产兼容候选前端10和HTTP8通过，固定代码CI成功。未进行真实人员数据或浏览器可视验收。验收记录和重新生成的HTML仅更新本地/GitHub，服务器保持固定性能提交中的HTML，架构页面仍未开放静态URL；此前介绍视频保留原基线。人员导出固定提交103396ffb021dbf495dbd5cccbec6e342b22ea54的历史验收保留在当日记录和部署手册。 同日新增调休分类提醒为纯前端更新，待使用apply-leave-guidance.py静态发布；仅替换js/leave.js和固定HTML，代码备份后原子替换并核对服务PID保持。此流程不重启Node，不修改数据库、会话或私有配置，不要求既有用户重新登录。",
   "maintenance": [
     {
       "title": "维护同一个文件",
@@ -658,6 +658,10 @@
     {
       "path": "deploy/apply-startup-performance.py",
       "description": "已上线导出版本的 server/auth/index/client-auth 精确补丁、三项基线摘要、停写备份、传输验收与失败代码恢复"
+    },
+    {
+      "path": "deploy/apply-leave-guidance.py",
+      "description": "只备份及原子替换公开请假脚本与离线架构HTML，不重启服务，不读取或写入人员、账号、配置和数据库"
     }
   ]
 }

@@ -2,6 +2,7 @@
 const Leave = {
   _statusFilter: '',
   _saving: false,
+  _guidanceKey: '',
   _escape(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); },
   _isManager() { return Auth.isAdmin() || Auth.isLeader(); },
   _employees() { return Store.getEmployees().filter(function(e) { return Auth.canAccessEmployee(e.id); }); },
@@ -47,15 +48,48 @@ const Leave = {
   showApplyModal() {
     var self=this, employees=this._employees().filter(function(e) { return self._canApply(e.id); });
     if (!employees.length) { App.toast('请先完善并关联自己的人员信息','warning'); return; }
+    this._guidanceKey='';
     var options=employees.map(function(e) { return '<option value="'+Number(e.id)+'">'+self._escape(e.name+' ('+(e.department||'未分配')+')')+'</option>'; }).join('');
-    App.openModal('申请请假','<div class="form-group"><label for="leaveEmployee">人员 *</label><select class="form-control" id="leaveEmployee">'+options+'</select></div>'+
+    App.openModal('申请请假','<div class="form-group"><label for="leaveEmployee">人员 *</label><select class="form-control" id="leaveEmployee" onchange="Leave.updateHoursField()">'+options+'</select></div>'+
       '<div class="form-group"><label for="leaveType">请假类型 *</label><select class="form-control" id="leaveType" onchange="Leave.updateHoursField()"><option value="leave">请假</option><option value="compensatory">调休请假</option><option value="shift">替班请假</option><option value="sick">病假</option><option value="personal">事假</option><option value="annual">年假</option><option value="marriage">婚假</option><option value="maternity">产假</option><option value="other">其他</option></select></div>'+
       '<div class="form-row"><div class="form-group"><label for="leaveStart">开始日期 *</label><input type="date" class="form-control" id="leaveStart" value="'+App.today()+'"></div><div class="form-group"><label for="leaveEnd">结束日期 *</label><input type="date" class="form-control" id="leaveEnd" value="'+App.today()+'"></div></div>'+
-      '<div class="form-group" id="leaveHoursGroup" hidden><label for="leaveHours">调休时长（小时）*</label><input type="number" class="form-control" id="leaveHours" min="0.5" step="0.5" value="1"></div>'+
+      '<div class="form-group" id="leaveHoursGroup" hidden><label for="leaveHours">调休时长（小时）*</label><input type="number" class="form-control" id="leaveHours" min="0.5" step="0.5" value="1"><p id="leaveGuidance" role="status" style="margin-top:8px;line-height:1.8;color:var(--text-light);"></p></div>'+
       '<div class="form-group"><label for="leaveReason">请假原因</label><textarea class="form-control" id="leaveReason" maxlength="2000"></textarea></div>',
       '<button class="btn btn-primary" onclick="Leave.saveApply()">提交申请</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>');
   },
-  updateHoursField() { document.getElementById('leaveHoursGroup').hidden=document.getElementById('leaveType').value!=='compensatory'; },
+  _compensatoryGuidance(id) {
+    if (!this._canApply(id)) return null;
+    var employee=this._employees().find(function(e) { return Number(e.id)===Number(id); });
+    if (!employee) return null;
+    var balance=Store.getTimeBalance(id)||{}, value=Number(balance.remainingHours);
+    if (!Number.isFinite(value)) return {remainingHours:0,message:'调休余额读取异常，请重新加载或联系楼长核对后再申请。',key:'invalid:'+Number(id)};
+    var remaining=Number.isFinite(value)&&value>0?value:0;
+    var is420=String(employee.company==null?'':employee.company).trim()==='420';
+    var message=remaining>0
+      ? '当前可用调休时长 '+remaining.toFixed(1)+' 小时。请发送调休申请邮件，走邮件审批流程；本系统申请仍需提交并等待审批。'
+      : is420
+        ? '当前无可用调休时长。420人员请前往 ERP 提交法定年假、福利年假或带薪病假申请。'
+        : '当前无可用调休时长。请联系楼长，在自己所属平台提交请假申请。';
+    return {remainingHours:remaining,message:message,key:JSON.stringify([Number(id),remaining,is420])};
+  },
+  _showCompensatoryGuidance(guidance, force) {
+    if (!guidance || (!force && this._guidanceKey===guidance.key)) return;
+    this._guidanceKey=guidance.key;
+    // Native alerts preserve the open application form and all entered values.
+    if (typeof window!=='undefined' && typeof window.alert==='function') window.alert(guidance.message);
+    else App.toast(guidance.message,guidance.remainingHours>0?'info':'warning');
+  },
+  updateHoursField() {
+    var type=document.getElementById('leaveType'), group=document.getElementById('leaveHoursGroup');
+    if (!type || !group) return;
+    group.hidden=type.value!=='compensatory';
+    if (group.hidden) { this._guidanceKey=''; return; }
+    var person=document.getElementById('leaveEmployee');
+    var guidance=person&&this._compensatoryGuidance(Number(person.value));
+    var hint=document.getElementById('leaveGuidance');
+    if (hint) hint.textContent=guidance?guidance.message:'';
+    this._showCompensatoryGuidance(guidance,false);
+  },
   async saveApply() {
     if (this._saving) return;
     var id=Number(document.getElementById('leaveEmployee').value);
@@ -67,9 +101,12 @@ const Leave = {
     var emp=this._employees().find(function(e) { return Number(e.id)===id; });
     if (type==='shift' && !Store._isOutsourced(emp)) { App.toast('替班请假仅限外包单位外派人员使用','error'); return; }
     if (type==='compensatory') {
-      var balance=Store.getTimeBalance(id);
+      var guidance=this._compensatoryGuidance(id);
+      if (!guidance) { this._deny(); return; }
+      if (guidance.remainingHours<=0) { this._showCompensatoryGuidance(guidance,true); return; }
       if (!Number.isFinite(hours)||hours<=0) { App.toast('请填写有效的调休小时数','error'); return; }
-      if (hours>balance.remainingHours) { App.toast('调休时长不足，当前剩余 '+balance.remainingHours.toFixed(1)+' 小时','error'); return; }
+      if (hours>guidance.remainingHours) { App.toast('调休时长不足，当前剩余 '+guidance.remainingHours.toFixed(1)+' 小时','error'); return; }
+      this._showCompensatoryGuidance(guidance,false);
     }
     var days=Math.floor((endTime-startTime)/86400000)+1;
     var saved=await this._mutate(function() { Store.addLeaveRequest({employeeId:id,type:type,startDate:start,endDate:end,days:days,hours:type==='compensatory'?hours:0,reason:reason,status:'pending'}); },'请假申请已提交，等待审批');
