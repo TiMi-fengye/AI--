@@ -1,0 +1,178 @@
+{
+  "schemaVersion": 1,
+  "title": "人力资源管理系统 · 使用与技术介绍",
+  "date": "2026-11-16",
+  "language": "zh-CN",
+  "format": "1920×1080 · 中文配音 · 中文字幕",
+  "scope": "使用操作与技术介绍各一半；操作示意动画，不是生产屏幕录制",
+  "baseline": "功能依据当前公开源码；生产状态依据2026-11-13已记录验收，短信开发版未部署",
+  "privacy": "所有画面仅使用虚构演示资料，不读取生产账号、人员档案、配置或备份。",
+  "scenes": [
+    {
+      "id": "welcome", "chapter": "开场", "kicker": "HR SYSTEM / USER GUIDE & ENGINEERING", "kind": "cover",
+      "title": "人力资源管理系统", "subtitle": "从日常使用，到开发与部署",
+      "bullets": ["人员档案与楼栋管理", "加班、请假与小时数", "架构、技术栈与阿里云部署"],
+      "narration": "欢迎了解人力资源管理系统。本视频前半部分介绍日常操作，后半部分介绍开发环境、技术栈和部署流程。画面使用虚构演示资料，帮助人员、楼长和管理员快速上手。"
+    },
+    {
+      "id": "roles", "chapter": "01 · 使用操作", "kicker": "ROLE & SCOPE", "kind": "roles",
+      "title": "先了解自己的角色", "subtitle": "角色决定功能，负责楼栋决定管理范围",
+      "cards": [{"title":"管理员","items":["查看全部范围","维护人员与组织","分配账号权限"]},{"title":"楼长","items":["管理授权楼栋","处理范围内申请","查看楼栋汇总"]},{"title":"普通人员","items":["维护本人资料","提交加班与请假","查看自己的小时数"]}],
+      "bullets": ["服务端校验权限及数据范围"],
+      "narration": "系统有三类角色。管理员查看全部信息；楼长只管理明确分配的楼栋；普通人员维护自己的资料，提交申请并查看本人小时数。权限由服务端校验，页面菜单也会随角色变化。"
+    },
+    {
+      "id": "register", "chapter": "01 · 使用操作", "kicker": "PHONE REGISTRATION", "kind": "login",
+      "title": "第一步：手机号注册", "subtitle": "登录页 → 手机号注册 → 填写人员资料",
+      "fields": [{"label":"姓名 *","value":"演示人员A"},{"label":"手机号 *","value":"填写本人手机号"},{"label":"密码 *","value":"至少8位，并再次确认"},{"label":"工号（选填）","value":"000123"}],
+      "bullets": ["姓名、手机号和密码为必填", "工号为文本，保留前导零", "六项组织信息可以稍后补充"],
+      "narration": "新人员在登录页选择手机号注册，填写姓名、本人手机号，设置至少八位密码并确认。工号可以留空，填写时会保留前导零。人员性质、人员属性、工作属性、部门、状态和楼栋都可以稍后补充。"
+    },
+    {
+      "id": "login", "chapter": "01 · 使用操作", "kicker": "SIGN IN & CURRENT STATUS", "kind": "login",
+      "title": "第二步：登录系统", "subtitle": "当前生产：手机号 + 密码",
+      "fields": [{"label":"手机号 / 管理账号","value":"填写自己的登录账号"},{"label":"密码","value":"输入本人密码"},{"label":"操作","value":"点击登录，进入个人页面"}],
+      "bullets": ["微信登录已取消", "验证码已开发，生产尚未部署启用", "启用短信后：手机号登录仍需密码"],
+      "narration": "注册后使用手机号和密码登录，原微信登录已取消。当前已记录的生产版本还没有启用短信验证码。验证码功能已完成开发，需要开通短信服务并发布对应版本后使用，届时登录仍需要密码。"
+    },
+    {
+      "id": "self-profile", "chapter": "01 · 使用操作", "kicker": "MY PROFILE", "kind": "profile",
+      "title": "第三步：核对“我的资料”", "subtitle": "登录 → 我的资料 → 维护我的资料 → 保存",
+      "fields": [{"label":"姓名 / 工号","value":"演示人员A / 000123"},{"label":"部门 / 楼栋","value":"演示部门 / 演示楼栋A"},{"label":"邮箱","value":"demo@example.com"},{"label":"入职日期","value":"2026-01-01"}],
+      "bullets": ["核对工号、部门、楼栋、邮箱和入职日期", "后续可继续补充其他档案信息", "保存结果以服务器确认为准"],
+      "narration": "普通人员登录后先查看我的资料，再进入维护入口补全信息。请核对工号、部门、楼栋、邮箱和入职日期。修改后等待服务器确认保存。工号只是档案字段，修改工号不会改变账号与本人记录的关联。"
+    },
+    {
+      "id": "personnel", "chapter": "01 · 使用操作", "kicker": "PERSONNEL MANAGEMENT", "kind": "personnel",
+      "title": "管理员：统一维护人员档案", "subtitle": "人力资源 → 添加人员 / 编辑人员",
+      "bullets": ["列表展示实际工号，不用序号代替", "同时展示部门、楼栋、邮箱、入职日期", "按姓名、工号、岗位搜索，并结合楼栋筛选"],
+      "narration": "管理员在人力资源页面添加或编辑人员。列表展示实际工号，并显示部门、楼栋、邮箱和入职日期。可以搜索姓名、工号或岗位，再结合楼栋筛选。已有手机号对应档案时，应由管理员关联账号。"
+    },
+    {
+      "id": "leader-assign", "chapter": "01 · 使用操作", "kicker": "FACILITIES SUPERVISOR → LEADER", "kind": "leaders",
+      "title": "设施运维主管，如何设置为楼长？", "subtitle": "岗位是人员信息，楼长是账号权限",
+      "steps": ["人员先注册", "关联人员档案", "角色设为楼长", "分配负责楼栋"],
+      "fields": [{"label":"入口","value":"系统设置 → 权限管理 → 编辑权限"},{"label":"关联人员档案","value":"演示人员A"},{"label":"角色","value":"楼长"},{"label":"负责楼栋","value":"演示楼栋A"}],
+      "bullets": ["填写“设施运维主管”岗位，不会自动获得权限"],
+      "narration": "设施运维主管在业务上承担楼长职责。人员注册后，管理员进入系统设置、权限管理，关联人员档案，把角色设为楼长，再分配负责楼栋。只填写岗位名称或楼栋，不会自动获得管理权限。"
+    },
+    {
+      "id": "leader-change", "chapter": "01 · 使用操作", "kicker": "DYNAMIC BUILDING LEADERS", "kind": "leaders",
+      "title": "更换楼长，只调整账号授权", "subtitle": "授权账号 → 当前姓名 → 楼栋看板",
+      "steps": ["撤销旧任命", "授权新楼长", "刷新看板", "自动显示新姓名"],
+      "bullets": ["不再手动维护看板姓名", "进入看板、重新聚焦或恢复可见时同步", "退出登录或档案离职，不会自动撤权"],
+      "narration": "看板姓名从当前授权的楼长账号自动生成。更换人员时，先调整旧账号的角色或楼栋，再授权新账号。重新进入或聚焦看板即可同步。名单代表管理任命，退出登录或档案改为离职，都不会自动撤销权限。"
+    },
+    {
+      "id": "overtime", "chapter": "01 · 使用操作", "kicker": "OVERTIME REQUEST", "kind": "attendance",
+      "title": "提交自己的加班申请", "subtitle": "考勤管理 → 加班申请 → 申请加班",
+      "steps": ["选择日期", "选择加班类型", "填写时长与原因", "提交并等待审批"],
+      "fields": [{"label":"加班类型","value":"费用加班 / 调休加班"},{"label":"时长","value":"2小时（演示）"},{"label":"提交后状态","value":"待审批"}],
+      "bullets": ["普通人员只能提交本人申请", "管理员或负责楼长处理范围内记录"],
+      "narration": "进入考勤管理，选择加班申请，再点击申请加班。填写日期、费用或调休类型、小时数和原因，提交后等待审批。普通人员只能提交自己的申请，有权限的管理员或楼长处理对应范围的记录。"
+    },
+    {
+      "id": "leave", "chapter": "01 · 使用操作", "kicker": "LEAVE REQUEST", "kind": "attendance",
+      "title": "提交请假与调休申请", "subtitle": "考勤管理 → 请假申请 → 申请请假",
+      "steps": ["选择请假类型", "填写起止日期", "补充时长与原因", "查看审批状态"],
+      "bullets": ["调休申请需要填写小时数", "调休时长不能超过可用余额", "已提交申请由管理人员审批"],
+      "narration": "请假申请中选择类型、起止日期并填写原因。调休还需要填写小时数，系统会校验可用余额。提交后可以查看待审批、已批准或已拒绝状态。普通人员不能自行审批，也不能编辑或删除已经提交的申请。"
+    },
+    {
+      "id": "hours", "chapter": "01 · 使用操作", "kicker": "MY HOURS", "kind": "hours",
+      "title": "我的小时数，如何计算？", "subtitle": "考勤管理 → 我的小时数",
+      "cards": [{"title":"费用加班","items":["按已批准记录汇总"]},{"title":"调休加班","items":["形成调休额度"]},{"title":"剩余调休","items":["额度减去已使用调休"]}],
+      "bullets": ["待审批记录不直接增加可用时长", "普通人员只查看自己的数据"],
+      "narration": "我的小时数按已批准记录计算，分别展示费用加班、调休加班、已使用调休和剩余调休。待审批记录不会直接增加可用时长。普通人员看不到全员看板、其他人员档案或其他人的考勤数据。"
+    },
+    {
+      "id": "usage-check", "chapter": "01 · 使用操作", "kicker": "DAILY WORKFLOW", "kind": "ending",
+      "title": "日常操作的三个确认", "subtitle": "资料准确 · 授权清楚 · 审批有据",
+      "bullets": ["人员：核对本人档案，按需提交申请", "楼长：确认负责楼栋，处理范围内记录", "管理员：维护账号授权，及时调整负责人"],
+      "narration": "日常使用时，人员负责维护个人资料并提交真实申请；楼长确认管理楼栋，处理范围内记录；管理员维护账号和任命。接下来，我们从浏览器请求开始，了解系统的技术实现和部署方式。"
+    },
+    {
+      "id": "architecture", "chapter": "02 · 开发与部署", "kicker": "SYSTEM ARCHITECTURE", "kind": "architecture",
+      "title": "从浏览器到业务数据", "subtitle": "单应用服务，统一完成认证、接口与权限校验",
+      "nodes": [{"title":"浏览器","body":"HTML / CSS / JavaScript"},{"title":"Nginx","body":"公网入口与反向代理"},{"title":"Node.js","body":"认证 / 权限 / JSON API"},{"title":"MySQL + JSON","body":"业务快照 / 账号 / 组织配置"}],
+      "bullets": ["浏览器通过 Fetch 调用同源接口", "Node 在返回数据前执行角色及楼栋范围校验"],
+      "narration": "浏览器先访问网关，再由网关转发给应用服务。应用同时提供页面和接口，在读取或保存数据前校验登录会话、角色及楼栋范围。前端通过请求接口交换数据，不直接连接数据库。"
+    },
+    {
+      "id": "frontend-stack", "chapter": "02 · 开发与部署", "kicker": "FRONTEND STACK", "kind": "stack",
+      "title": "前端：原生页面与模块化职责", "subtitle": "HTML5 · CSS3 · JavaScript · Fetch · SheetJS",
+      "cards": [{"title":"页面与布局","items":["HTML / CSS","Flex / Grid / 响应式"]},{"title":"交互与同步","items":["原生 JavaScript","App 调度 / Store 同步"]},{"title":"业务模块","items":["人员 / 看板 / 考勤","SheetJS 表格导入导出"]}],
+      "bullets": ["无需前端框架打包即可运行"],
+      "narration": "前端采用网页原生技术，样式负责布局和响应式适配，脚本按人员、看板、考勤等职责划分。入口模块调度页面，数据模块负责同步。表格导入导出使用项目内置的表格处理库，不需要额外前端打包流程。"
+    },
+    {
+      "id": "backend-stack", "chapter": "02 · 开发与部署", "kicker": "BACKEND & SECURITY", "kind": "stack",
+      "title": "后端：Node.js 与服务端认证", "subtitle": "内置 HTTP 服务 · crypto · mysql2",
+      "cards": [{"title":"接口服务","items":["Node.js 内置 http","JSON API / 静态白名单"]},{"title":"认证授权","items":["随机盐 + scrypt","HttpOnly 会话 Cookie"]},{"title":"数据库驱动","items":["mysql2/promise","范围合并 / 版本校验"]}],
+      "bullets": ["服务端密码哈希保存", "会话12小时，服务重启后重新登录"],
+      "narration": "后端使用 Node 内置的网络、文件和加密模块，并通过数据库驱动访问业务存储。密码使用随机盐和哈希保存，浏览器通过受保护的会话保持登录。会话有效期十二小时，服务重启后需要重新登录。"
+    },
+    {
+      "id": "storage", "chapter": "02 · 开发与部署", "kicker": "DATA & CONSISTENCY", "kind": "stack",
+      "title": "业务、账号与组织配置分开保存", "subtitle": "保存前检查范围与 revision，避免旧数据覆盖",
+      "cards": [{"title":"业务快照","items":["生产 MySQL 主存储","JSON 初始化与灾备"]},{"title":"账号与会话","items":["受保护账号文件","会话仅存应用内存"]},{"title":"组织选项","items":["独立配置与版本号","保留人员已有字段值"]}],
+      "bullets": ["旧版本写入返回冲突，重新读取后处理", "发布代码保留运行数据与配置"],
+      "narration": "生产业务以数据库快照为主，文件用于初始化和灾备。账号与组织选项各自保存，会话存于应用内存。写入时校验数据版本并合并授权范围；遇到旧版本冲突应重新读取，避免覆盖他人的修改。"
+    },
+    {
+      "id": "development", "chapter": "02 · 开发与部署", "kicker": "LOCAL DEVELOPMENT", "kind": "development",
+      "title": "开发环境与本地启动", "subtitle": "Node.js / npm / Git / 现代浏览器",
+      "code": ["# 在项目根目录执行", "npm --prefix server install", "node server/server.js", "", "# 浏览器访问", "http://localhost:8080/login.html"],
+      "bullets": ["现有部署兼容参考：Node.js 20 系列", "按公开模板配置本地环境", "开发与演示使用独立数据目录"],
+      "narration": "本地准备运行环境、包管理工具和现代浏览器。现有部署以二十系列运行环境作为兼容参考。按公开模板建立本地配置，安装服务端依赖，再从项目根目录启动服务，用浏览器访问本机八零八零端口。"
+    },
+    {
+      "id": "code-map", "chapter": "02 · 开发与部署", "kicker": "SOURCE CODE MAP", "kind": "development",
+      "title": "按职责定位代码", "subtitle": "页面交互、认证接口、测试与部署各有入口",
+      "code": ["js/                 前端业务模块", "server/server.js    HTTP与存储入口", "server/auth-service.js  认证与数据范围", "tests/              临时数据回归测试", "deploy/             定向发布与恢复", "技术文档/            当前架构及部署说明"],
+      "bullets": ["优先阅读固定架构 HTML 和当前权限说明", "历史文档中的旧登录描述不作现状依据"],
+      "narration": "理解代码时先看前端业务模块，再看服务入口和认证模块。测试、部署和技术文档分别有独立目录。当前功能以固定架构页面和最新权限说明为准，历史文档中旧的第三方登录描述不再适用。"
+    },
+    {
+      "id": "tests", "chapter": "02 · 开发与部署", "kicker": "VERIFICATION", "kind": "development",
+      "title": "测试与文档一起校验", "subtitle": "验证注册、角色范围、申请审批与数据冲突",
+      "code": ["node --test tests/*.test.js", "", "node scripts/generate-architecture.cjs", "node scripts/generate-architecture.cjs --check"],
+      "bullets": ["测试使用临时数据，不写实际业务目录", "固定 HTML 记录模块、依赖与源码指纹", "生成后再检查，避免交付过期文档"],
+      "narration": "交付前执行与修改相关的业务测试，重点验证注册、角色范围、申请审批和数据冲突。测试只使用临时数据。更新架构事实与每日记录后，重新生成同一份架构页面，并执行检查命令确认文档没有过期。"
+    },
+    {
+      "id": "production", "chapter": "02 · 开发与部署", "kicker": "ALIYUN ECS / RECORDED BASELINE", "kind": "architecture",
+      "title": "阿里云生产部署结构", "subtitle": "已记录环境：Ubuntu 22.04 · Nginx · systemd · MySQL 8",
+      "nodes": [{"title":"公网浏览器","body":"访问 Nginx 入口"},{"title":"Nginx","body":"转发至本机 :8080"},{"title":"hr-system 服务","body":"/opt/hr-system / hrsystem"},{"title":"本机 MySQL","body":"业务快照与受保护数据"}],
+      "bullets": ["systemd 管理 hr-system.service", "数据库与应用端口位于内网侧", "列示版本为既有兼容参考"],
+      "narration": "已记录的阿里云部署使用乌班图系统、反向代理、服务管理和本机数据库。程序位于应用目录，由专用用户运行；服务管理器负责启动和异常拉起。代理转发至本机应用端口，数据库不直接对公网开放。"
+    },
+    {
+      "id": "release", "chapter": "02 · 开发与部署", "kicker": "BACKUP → RELEASE → VERIFY", "kind": "deployment",
+      "title": "发布流程：先备份，再更新", "subtitle": "固定版本、明确清单、保护运行数据",
+      "steps": ["核对版本与清单", "一致备份", "定向发布代码", "重启并验收", "失败恢复代码"],
+      "bullets": ["备份代码、配置、运行数据和数据库", "代码发布不覆盖账号、人员和组织配置", "历史发布脚本不承担新版本发布"],
+      "narration": "发布时先核对固定版本和文件清单，再完成一致备份。备份应覆盖代码、配置、运行数据与数据库。只安装本次审阅的代码，保留账号和业务资料，重启后检查健康及权限边界；失败时恢复本次代码。"
+    },
+    {
+      "id": "operations", "chapter": "02 · 开发与部署", "kicker": "HEALTH & ACCESS BOUNDARIES", "kind": "operations",
+      "title": "上线后，检查哪些内容？", "subtitle": "服务正常，还要确认数据访问范围",
+      "code": ["systemctl status hr-system --no-pager", "nginx -t", "curl -fsS http://127.0.0.1:8080/api/auth/status"],
+      "bullets": ["匿名不能读取业务快照和组织私有名单", "楼长只看到授权楼栋，普通人员只看到本人", "数据及配置文件不能作为静态资源公开"],
+      "narration": "上线验收除了服务状态，还要检查访问范围。匿名请求不能读取业务快照；楼长只得到负责楼栋的数据，普通人员只得到本人记录。运行数据和配置文件不能作为公开网页资源。排查时不要把敏感日志或配置上传到仓库。"
+    },
+    {
+      "id": "integration", "chapter": "02 · 开发与部署", "kicker": "IMPLEMENTED / TO BE CONFIGURED", "kind": "stack",
+      "title": "区分已上线与待配置能力", "subtitle": "以发布记录和验收结果确认实际状态",
+      "cards": [{"title":"已记录上线","items":["手机号密码 / 工号","动态楼长 / 数据范围"]},{"title":"短信验证码","items":["已开发，默认关闭","开通短信并发布后启用"]},{"title":"其他集成","items":["飞书通知需要配置","HTTPS需要证书部署"]}],
+      "bullets": ["本视频不执行生产发布，也不更改权限"],
+      "narration": "视频区分已经上线和待配置的能力。手机号密码、工号和动态楼长已有发布记录。短信验证码已开发但尚未部署启用；飞书通知需要业务配置，安全连接需要证书。新增能力应按对应版本发布和验收。"
+    },
+    {
+      "id": "ending", "chapter": "交付与维护", "kicker": "KEEP THE GUIDE WITH THE CODE", "kind": "ending",
+      "title": "使用有路径，更新有记录", "subtitle": "视频 + 字幕 + 分镜脚本 + 固定架构 HTML",
+      "bullets": ["人员：我的资料、加班、请假、小时数", "管理：人员档案、楼栋授权、申请审批", "技术：开发、测试、备份、发布与验收"],
+      "narration": "你现在可以按角色使用系统，也能理解主要技术和发布流程。交付包含视频、字幕、章节播放器与分镜脚本。后续功能变化时同步维护说明和固定架构页面，让操作、实现与发布记录保持一致。"
+    }
+  ]
+}

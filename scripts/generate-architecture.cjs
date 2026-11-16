@@ -59,6 +59,21 @@ function collectFiles() {
   walk("css", file => file.endsWith(".css"));
   walk("tests", file => file.endsWith(".test.js"));
   walk("scripts", file => file.endsWith(".cjs"));
+  // Explicit video production sources only; never read MP4, WAV, rendered PNG,
+  // temporary build directories, or arbitrary files from a media directory.
+  for (const relative of [
+    "scripts/video/build-video.py",
+    "scripts/video/render-scenes.ps1",
+    "scripts/video/synthesize-narration.ps1",
+    "视频/人力资源管理系统使用与技术介绍/README.md",
+    "视频/人力资源管理系统使用与技术介绍/分镜脚本.json",
+    "视频/人力资源管理系统使用与技术介绍/离线播放.html",
+    "视频/人力资源管理系统使用与技术介绍/视频信息.json",
+    "视频/人力资源管理系统使用与技术介绍/字幕.srt",
+    "视频/人力资源管理系统使用与技术介绍/字幕.vtt"
+  ]) {
+    if (fs.existsSync(safeFile(relative))) found.push(relative);
+  }
   walk("技术文档", file => /\.(md|source\.json)$/.test(file));
   walk("updates", file => /\/\d{4}-\d{2}-\d{2}\.md$/.test(file));
   walk("deploy", file => /\.(sh|py)$/.test(file));

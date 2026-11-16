@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-13",
+  "updatedAt": "2026-11-16",
   "systemName": "人力资源管理系统",
   "organization": "华北一部 · 酒仙桥",
   "subtitle": "开发架构、技术栈与部署说明",
@@ -536,6 +536,10 @@
     {
       "title": "更新约定与门禁",
       "description": "AGENTS.md 约定每次交付更新；GitHub Actions 配置执行生成校验。CI 配置随项目同步到 GitHub 后生效。"
+    },
+    {
+      "title": "使用与技术介绍视频",
+      "description": "视频/人力资源管理系统使用与技术介绍/ 已生成约 5 分 38 秒、1920×1080 / 25fps 的中文配音视频，含 24 个场景、99 条字幕和离线章节播放器，人员操作与开发部署各占约一半。画面是使用虚构资料制作的操作示意动画，配音使用本机 Windows 慧慧；MP4 全片音视频解码通过。公开分镜、制作脚本和说明纳入项目同步，MP4 与封面仅作本地离线交付，不作为应用静态资源发布。功能变化时核对分镜后重新制作；具体规格及验收见视频信息.json与当日更新记录。"
     }
   ],
   "references": [
@@ -582,6 +586,18 @@
     {
       "path": "deploy/apply-dashboard-leaders.py",
       "description": "已上线工号基线摘要校验、楼长自动名单定向发布、停写备份、原数据校验和代码回滚"
+    },
+    {
+      "path": "视频/人力资源管理系统使用与技术介绍/README.md",
+      "description": "使用介绍视频的离线播放、交付清单、版本边界和制作方法"
+    },
+    {
+      "path": "视频/人力资源管理系统使用与技术介绍/分镜脚本.json",
+      "description": "操作流程、中文旁白与开发部署讲解的公开分镜来源"
+    },
+    {
+      "path": "scripts/video/build-video.py",
+      "description": "将公开场景、Windows 本地配音和字幕合成为 MP4 及章节播放器"
     }
   ]
 }

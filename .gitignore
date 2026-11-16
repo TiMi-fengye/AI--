@@ -26,3 +26,9 @@ node_modules/
 .sms-engine-test-*/
 .hr-sms-auth-*/
 .hr-organization-recovery-*/
+
+# generated media and intermediate assets; public storyboard and tools are tracked
+.delivery/
+视频/**/*.mp4
+视频/**/封面.jpg
+__pycache__/

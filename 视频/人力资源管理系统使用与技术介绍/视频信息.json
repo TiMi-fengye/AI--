@@ -1,0 +1,223 @@
+{
+  "title": "人力资源管理系统 · 使用与技术介绍",
+  "date": "2026-11-16",
+  "file": "人力资源管理系统使用与技术介绍.mp4",
+  "durationSeconds": 337.781,
+  "durationDisplay": "05:38",
+  "sizeBytes": 11315317,
+  "sha256": "e33664e7dcb024b1f3aaa64be3121186e5a938161bdf11d2d5704ae4088302a5",
+  "video": {
+    "codec_name": "h264",
+    "width": 1920,
+    "height": 1080,
+    "pix_fmt": "yuv420p",
+    "r_frame_rate": "25/1"
+  },
+  "audio": {
+    "codec_name": "aac",
+    "sample_rate": "48000",
+    "channels": 1
+  },
+  "voice": "Microsoft Huihui Desktop",
+  "voiceEngine": "Windows System.Speech",
+  "voiceRate": 5,
+  "subtitles": {
+    "burnedIn": true,
+    "external": [
+      "字幕.srt",
+      "字幕.vtt"
+    ],
+    "cueCount": 99,
+    "timing": "Each sentence uses its actual synthesized WAV length; long sentences split proportionally."
+  },
+  "sceneCount": 24,
+  "chapters": [
+    {
+      "id": "welcome",
+      "title": "人力资源管理系统",
+      "chapter": "开场",
+      "start": 0.0,
+      "duration": 12.44
+    },
+    {
+      "id": "roles",
+      "title": "先了解自己的角色",
+      "chapter": "01 · 使用操作",
+      "start": 12.44,
+      "duration": 12.88
+    },
+    {
+      "id": "register",
+      "title": "第一步：手机号注册",
+      "chapter": "01 · 使用操作",
+      "start": 25.32,
+      "duration": 14.72
+    },
+    {
+      "id": "login",
+      "title": "第二步：登录系统",
+      "chapter": "01 · 使用操作",
+      "start": 40.04,
+      "duration": 13.52
+    },
+    {
+      "id": "self-profile",
+      "title": "第三步：核对“我的资料”",
+      "chapter": "01 · 使用操作",
+      "start": 53.56,
+      "duration": 14.76
+    },
+    {
+      "id": "personnel",
+      "title": "管理员：统一维护人员档案",
+      "chapter": "01 · 使用操作",
+      "start": 68.32000000000001,
+      "duration": 14.8
+    },
+    {
+      "id": "leader-assign",
+      "title": "设施运维主管，如何设置为楼长？",
+      "chapter": "01 · 使用操作",
+      "start": 83.12,
+      "duration": 13.68
+    },
+    {
+      "id": "leader-change",
+      "title": "更换楼长，只调整账号授权",
+      "chapter": "01 · 使用操作",
+      "start": 96.80000000000001,
+      "duration": 14.96
+    },
+    {
+      "id": "overtime",
+      "title": "提交自己的加班申请",
+      "chapter": "01 · 使用操作",
+      "start": 111.76000000000002,
+      "duration": 14.04
+    },
+    {
+      "id": "leave",
+      "title": "提交请假与调休申请",
+      "chapter": "01 · 使用操作",
+      "start": 125.80000000000001,
+      "duration": 15.04
+    },
+    {
+      "id": "hours",
+      "title": "我的小时数，如何计算？",
+      "chapter": "01 · 使用操作",
+      "start": 140.84,
+      "duration": 13.52
+    },
+    {
+      "id": "usage-check",
+      "title": "日常操作的三个确认",
+      "chapter": "01 · 使用操作",
+      "start": 154.36,
+      "duration": 13.16
+    },
+    {
+      "id": "architecture",
+      "title": "从浏览器到业务数据",
+      "chapter": "02 · 开发与部署",
+      "start": 167.52,
+      "duration": 13.28
+    },
+    {
+      "id": "frontend-stack",
+      "title": "前端：原生页面与模块化职责",
+      "chapter": "02 · 开发与部署",
+      "start": 180.8,
+      "duration": 14.6
+    },
+    {
+      "id": "backend-stack",
+      "title": "后端：Node.js 与服务端认证",
+      "chapter": "02 · 开发与部署",
+      "start": 195.4,
+      "duration": 14.04
+    },
+    {
+      "id": "storage",
+      "title": "业务、账号与组织配置分开保存",
+      "chapter": "02 · 开发与部署",
+      "start": 209.44,
+      "duration": 13.76
+    },
+    {
+      "id": "development",
+      "title": "开发环境与本地启动",
+      "chapter": "02 · 开发与部署",
+      "start": 223.2,
+      "duration": 14.08
+    },
+    {
+      "id": "code-map",
+      "title": "按职责定位代码",
+      "chapter": "02 · 开发与部署",
+      "start": 237.28,
+      "duration": 13.44
+    },
+    {
+      "id": "tests",
+      "title": "测试与文档一起校验",
+      "chapter": "02 · 开发与部署",
+      "start": 250.72,
+      "duration": 14.6
+    },
+    {
+      "id": "production",
+      "title": "阿里云生产部署结构",
+      "chapter": "02 · 开发与部署",
+      "start": 265.32,
+      "duration": 14.12
+    },
+    {
+      "id": "release",
+      "title": "发布流程：先备份，再更新",
+      "chapter": "02 · 开发与部署",
+      "start": 279.44,
+      "duration": 14.48
+    },
+    {
+      "id": "operations",
+      "title": "上线后，检查哪些内容？",
+      "chapter": "02 · 开发与部署",
+      "start": 293.92,
+      "duration": 15.56
+    },
+    {
+      "id": "integration",
+      "title": "区分已上线与待配置能力",
+      "chapter": "02 · 开发与部署",
+      "start": 309.48,
+      "duration": 14.36
+    },
+    {
+      "id": "ending",
+      "title": "使用有路径，更新有记录",
+      "chapter": "交付与维护",
+      "start": 323.84000000000003,
+      "duration": 13.92
+    }
+  ],
+  "style": "操作示意动画，非生产录屏；虚构演示资料",
+  "productionBaseline": "功能依据当前公开源码；生产状态依据2026-11-13已记录验收，短信开发版未部署",
+  "checks": {
+    "fullAudioVideoDecode": "passed",
+    "dimensionsAndCodecs": "passed",
+    "durationAlignment": "passed",
+    "chapterCountAndTiming": "passed",
+    "subtitlesMonotonicAndInRange": "passed"
+  },
+  "deliveryFiles": [
+    "人力资源管理系统使用与技术介绍.mp4",
+    "离线播放.html",
+    "字幕.srt",
+    "字幕.vtt",
+    "封面.jpg",
+    "分镜脚本.json",
+    "视频信息.json",
+    "README.md"
+  ]
+}
