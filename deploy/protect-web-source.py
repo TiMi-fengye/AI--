@@ -29,8 +29,8 @@ SERVER_FILES = {'package.json', 'package-lock.json', 'npm-shrinkwrap.json', 'con
 ROOT_SUFFIXES = {'.html', '.js', '.css', '.md', '.bat', '.cmd', '.png', '.jpg', '.jpeg', '.svg', '.ico'}
 ROOT_FILES = {'manifest.json', 'LICENSE-SheetJS.txt', '.gitignore'}
 PUBLIC_TEMPLATES = {'server/config.example.json', 'deploy/sms.env.example'}
-# Individually reviewed, published driver programs; these contain protocol
-# implementations rather than production database passwords or configuration.
+# Individually reviewed public dependency sources and the repository's legacy
+# stop helper; these are not private runtime configuration or business data.
 PUBLIC_KNOWN_SOURCE = {
     'server/node_modules/mysql2/lib/connection_config.js',
     'server/node_modules/mysql2/lib/pool_config.js',
@@ -40,7 +40,11 @@ PUBLIC_KNOWN_SOURCE = {
     'server/node_modules/mysql2/lib/auth_plugins/sha256_password.js',
     'server/node_modules/mysql2/lib/commands/binlog_dump.js',
     'server/node_modules/mysql2/lib/packets/binlog_dump.js',
-    'server/node_modules/mysql2/lib/parsers/parser_cache.js'
+    'server/node_modules/mysql2/lib/parsers/parser_cache.js',
+    'server/node_modules/mysql2/lib/tls_session_cache.js',
+    'server/node_modules/undici-types/cache-interceptor.d.ts',
+    'server/node_modules/undici-types/cache.d.ts',
+    'server/stop.bat'
 }
 EXECUTABLE_SUFFIXES = {'.js', '.cjs', '.mjs', '.jsx', '.ts', '.tsx', '.node',
                        '.wasm', '.so', '.dll', '.dylib', '.py', '.sh', '.bash',
