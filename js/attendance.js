@@ -14,6 +14,7 @@ const Attendance = {
     return Store.getAttendance().filter(function(r) { return ids.has(Number(r.employeeId)); });
   },
   _canManage(id) { return this._isManagerUser() && this._employees().some(function(e) { return Number(e.id)===Number(id); }) && Auth.canManageEmployee(id); },
+  _canDelete(r) { return !!r && Auth.isAdmin() && this._canManage(r.employeeId); },
   _deny() { App.toast('无权操作考勤记录','error'); },
   render(container) {
     if (!Auth.currentUser()) { container.innerHTML=''; return; }
@@ -69,7 +70,9 @@ const Attendance = {
     if (!filtered.length) return '<div class="empty-state"><div class="empty-icon">⏰</div><p>暂无考勤记录</p></div>';
     var rows=filtered.map(function(r) {
       var e=employees.find(function(e) { return Number(e.id)===Number(r.employeeId); });
-      return '<tr>'+(todayOnly?'':'<td>'+self._escape(r.date)+'</td>')+'<td>'+self._escape(e.name)+'</td><td>'+self._escape(e.department||'-')+'</td><td>'+self._escape(r.checkIn||'-')+'</td><td>'+self._escape(r.checkOut||'-')+'</td><td>'+self._escape(statuses[r.status]||'-')+'</td><td>'+(!r.checkOut?'<button class="btn btn-info btn-sm" onclick="Attendance.showCheckoutModal('+Number(r.id)+')">签退</button> ':'')+'<button class="btn btn-danger btn-sm" onclick="Attendance.deleteRecord('+Number(r.id)+')">删除</button></td></tr>';
+      var controls=!r.checkOut?'<button class="btn btn-info btn-sm" onclick="Attendance.showCheckoutModal('+Number(r.id)+')">签退</button> ':'';
+      if (self._canDelete(r)) controls+='<button class="btn btn-danger btn-sm" onclick="Attendance.deleteRecord('+Number(r.id)+')">删除</button>';
+      return '<tr>'+(todayOnly?'':'<td>'+self._escape(r.date)+'</td>')+'<td>'+self._escape(e.name)+'</td><td>'+self._escape(e.department||'-')+'</td><td>'+self._escape(r.checkIn||'-')+'</td><td>'+self._escape(r.checkOut||'-')+'</td><td>'+self._escape(statuses[r.status]||'-')+'</td><td>'+(controls||'-')+'</td></tr>';
     }).join('');
     return '<div class="table-responsive"><table><thead><tr>'+(todayOnly?'':'<th>日期</th>')+'<th>人员</th><th>部门</th><th>签到</th><th>签退</th><th>状态</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>';
   },
@@ -105,8 +108,9 @@ const Attendance = {
     await this._mutate(function() { Store.updateAttendance(r.id,{checkOut:time}); },'签退成功');
   },
   async deleteRecord(id) {
+    if (this._saving) return;
     var r=Store.getAttendance().find(function(r) { return Number(r.id)===Number(id); });
-    if (!r || !this._canManage(r.employeeId)) { this._deny(); return; }
+    if (!this._canDelete(r)) { this._deny(); return; }
     if (App.confirm('确定删除此考勤记录？')) await this._mutate(function() { Store.deleteAttendance(r.id); },'已删除');
   },
   async allPresent() {

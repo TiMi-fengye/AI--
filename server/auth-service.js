@@ -204,9 +204,14 @@ function mergeSnapshot(input, incoming, user) {
       next[key] = oldRows.filter(r => !ids.has(r.employeeId)).concat(clone(rows));
     }
   }
-  // 楼长删除本楼栋人员时一并清理关联数据；其他楼栋记录始终保留。
+  // 考勤、加班和请假记录仅管理员可删除，不能通过移除人员间接删除。
   const keptIds = new Set(next.employees.map(e => e.id));
-  for (const key of ["overtime", "leaveRequests", "attendance", "performance"]) next[key] = next[key].filter(r => keptIds.has(r.employeeId));
+  for (const key of ["overtime", "leaveRequests", "attendance"]) {
+    const keptRecords = new Set(next[key].map(r => r.id));
+    if (current[key].some(r => !keptRecords.has(r.id) || (allIds.has(r.employeeId) && !keptIds.has(r.employeeId)))) fail(403, "仅管理员可删除考勤、加班或请假记录；关联人员请联系管理员处理");
+  }
+  // 历史孤儿考勤记录保留原样，绩效仍沿用原来的人员清理规则。
+  next.performance = next.performance.filter(r => keptIds.has(r.employeeId));
   ensureBalance(next);
     next.settlements = []; // 派生结算缓存失效，按保留的业务数据重新计算。
   next.revision = current.revision + 1;

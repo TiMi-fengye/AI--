@@ -34,6 +34,7 @@ const Leave = {
     return !!u && this._employees().some(function(e) { return Number(e.id)===Number(id); }) && (this._isManager() || Number(u.employeeId)===Number(id));
   },
   _canManage(r) { return !!r && this._isManager() && this._canApply(r.employeeId) && Auth.canManageEmployee(r.employeeId); },
+  _canDelete(r) { return !!r && Auth.isAdmin() && this._canManage(r); },
   _deny() { App.toast('无权操作该人员的请假记录','error'); },
   _refresh() {
     if (App.currentPage==='attendance') { Attendance._activeTab='leave'; App.navigate('attendance'); }
@@ -57,10 +58,11 @@ const Leave = {
     var statuses={pending:'待审批',approved:'已批准',rejected:'已拒绝'};
     var types=this._types;
     var rows=filtered.map(function(r) {
-      var e=employees.find(function(e) { return Number(e.id)===Number(r.employeeId); }), controls='-';
+      var e=employees.find(function(e) { return Number(e.id)===Number(r.employeeId); }), controls='';
       if (self._canManage(r) && r.status==='pending') controls='<button class="btn btn-success btn-sm" onclick="Leave.approve('+Number(r.id)+')">批准</button> <button class="btn btn-danger btn-sm" onclick="Leave.reject('+Number(r.id)+')">拒绝</button>';
+      if (self._canDelete(r)) controls+=(controls?' ':'')+'<button class="btn btn-danger btn-sm" onclick="Leave.delete('+Number(r.id)+')">删除</button>';
       var duration=Store.isCompensatoryLeave(r)?(Number(r.hours)||0).toFixed(1)+'h':(Number(r.days)||0)+'天';
-      return '<tr><td>#'+self._escape(r.id)+'</td><td>'+self._escape(e.name)+'</td>'+(manager?'<td>'+self._escape(e.department||'-')+'</td>':'')+'<td>'+self._escape(types[r.type]||r.type)+'</td><td>'+self._escape(self._formatDateTime(r.startDate))+' ~ '+self._escape(self._formatDateTime(r.endDate))+'</td><td>'+duration+'</td><td>'+self._escape(r.reason||'-')+'</td><td>'+self._escape(statuses[r.status]||'-')+'</td>'+(manager?'<td>'+controls+'</td>':'')+'</tr>';
+      return '<tr><td>#'+self._escape(r.id)+'</td><td>'+self._escape(e.name)+'</td>'+(manager?'<td>'+self._escape(e.department||'-')+'</td>':'')+'<td>'+self._escape(types[r.type]||r.type)+'</td><td>'+self._escape(self._formatDateTime(r.startDate))+' ~ '+self._escape(self._formatDateTime(r.endDate))+'</td><td>'+duration+'</td><td>'+self._escape(r.reason||'-')+'</td><td>'+self._escape(statuses[r.status]||'-')+'</td>'+(manager?'<td>'+(controls||'-')+'</td>':'')+'</tr>';
     }).join('');
     return '<div class="table-responsive"><table><thead><tr><th>编号</th><th>人员</th>'+(manager?'<th>部门</th>':'')+'<th>类型</th><th>起止时间</th><th>时长</th><th>原因</th><th>状态</th>'+(manager?'<th>操作</th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   },
@@ -152,8 +154,9 @@ const Leave = {
   approve(id) { return this._setStatus(id,'approved'); },
   reject(id) { return this._setStatus(id,'rejected'); },
   async delete(id) {
+    if (this._saving) return;
     var r=Store.getLeaveRequests().find(function(r) { return Number(r.id)===Number(id); });
-    if (!this._canManage(r)) { this._deny(); return; }
+    if (!this._canDelete(r)) { this._deny(); return; }
     if (App.confirm('确定删除此请假记录？')) await this._mutate(function() { Store.deleteLeaveRequest(r.id); },'已删除');
   }
 };

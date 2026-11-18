@@ -14,6 +14,7 @@ const Overtime = {
     return !!u && this._employees().some(function(e) { return Number(e.id) === Number(id); }) && (this._isManager() || Number(u.employeeId) === Number(id));
   },
   _canManage(r) { return !!r && this._isManager() && this._canApply(r.employeeId) && Auth.canManageEmployee(r.employeeId); },
+  _canDelete(r) { return !!r && Auth.isAdmin() && this._canManage(r); },
   _deny() { App.toast('无权操作该人员的加班记录','error'); },
   _refresh() {
     if (App.currentPage === 'attendance') { Attendance._activeTab = 'overtime'; App.navigate('attendance'); }
@@ -39,8 +40,9 @@ const Overtime = {
       var e=employees.find(function(e) { return Number(e.id)===Number(r.employeeId); }), controls='';
       if (self._canManage(r)) {
         if (r.status==='pending') controls+='<button class="btn btn-success btn-sm" onclick="Overtime.approve('+Number(r.id)+')">批准</button> <button class="btn btn-danger btn-sm" onclick="Overtime.reject('+Number(r.id)+')">拒绝</button> ';
-        controls+='<button class="btn btn-outline btn-sm" onclick="Overtime.showEditModal('+Number(r.id)+')">编辑</button> <button class="btn btn-danger btn-sm" onclick="Overtime.deleteRecord('+Number(r.id)+')">删除</button>';
+        controls+='<button class="btn btn-outline btn-sm" onclick="Overtime.showEditModal('+Number(r.id)+')">编辑</button>';
       }
+      if (self._canDelete(r)) controls+=' <button class="btn btn-danger btn-sm" onclick="Overtime.deleteRecord('+Number(r.id)+')">删除</button>';
       return '<tr><td>'+self._escape(r.date)+'</td><td>'+self._escape(e.name)+'</td>'+(manager?'<td>'+self._escape(e.department||'-')+'</td>':'')+'<td>'+(r.overtimeType==='compensatory'?'调休加班':'费用加班')+'</td><td>'+(Number(r.hours)||0).toFixed(1)+'h</td><td>'+self._escape(r.reason||'-')+'</td><td>'+self._escape(statuses[r.status]||'-')+'</td>'+(manager?'<td>'+controls+'</td>':'')+'</tr>';
     }).join('');
     return '<div class="table-responsive"><table><thead><tr><th>日期</th><th>人员</th>'+(manager?'<th>部门</th>':'')+'<th>加班类型</th><th>时长</th><th>原因</th><th>状态</th>'+(manager?'<th>操作</th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
@@ -101,8 +103,9 @@ const Overtime = {
   approve(id) { return this._setStatus(id,'approved'); },
   reject(id) { return this._setStatus(id,'rejected'); },
   async deleteRecord(id) {
+    if (this._saving) return;
     var r=Store.getOvertime().find(function(r) { return Number(r.id)===Number(id); });
-    if (!this._canManage(r)) { this._deny(); return; }
+    if (!this._canDelete(r)) { this._deny(); return; }
     if (App.confirm('确定删除此加班记录？')) await this._mutate(function() { Store.deleteOvertime(r.id); },'已删除');
   }
 };
