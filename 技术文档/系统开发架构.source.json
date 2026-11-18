@@ -4,7 +4,7 @@
   "systemName": "人力资源管理系统",
   "organization": "华北一部 · 酒仙桥",
   "subtitle": "开发架构、技术栈与部署说明",
-  "businessBaseline": "2026-11-18 每日北京时间02:00在线备份工具已开发，生产安装及首份验证待回执；11月17日479路径源码保护已启用，GitHub强制保护暂未设置，业务程序保持已上线基线",
+  "businessBaseline": "2026-11-18 每日北京时间02:00备份已安装验收，初始及实际systemd备份校验通过；479路径源码保护保持，GitHub强制保护暂未设置，既有业务程序不变",
   "introduction": "面向人员与运营团队的轻量级管理系统。围绕人员档案，连接组织、考勤、加班、请假、调休小时数与费用管理，并在服务端按管理员、楼长和普通人员限制数据范围。",
   "architecture": [
     {
@@ -52,7 +52,7 @@
     {
       "name": "每日备份与恢复",
       "technology": "Python 3 / systemd timer / mysqldump",
-      "description": "独立root私有工具每天北京时间02:00在线备份实际生产程序、MySQL、运行文件及配置。按完成时间戳保存，稳定窗口和归档完整性通过才发布，保留全部成功备份；生产安装待验收。",
+      "description": "独立root私有工具每天北京时间02:00在线备份实际生产程序、MySQL、运行文件及配置。按完成时间戳保存，稳定窗口和归档完整性通过才发布，保留全部成功备份；已安装且实际systemd服务试运行校验成功。",
       "files": [
         "deploy/daily-backup.py",
         "deploy/install-daily-backup.py",
@@ -271,7 +271,7 @@
         "deploy/install-daily-backup.py"
       ],
       "description": "CLI支持check/run/list/verify，不提供未经确认的数据覆盖。安装先验证直接备份及实际systemd服务，再启用02:00计时器；不重启业务或改源码权限，失败保留旧备份。",
-      "scope": "服务器root维护；待生产安装验收"
+      "scope": "服务器root维护；2026-11-18已安装并完成初始备份校验"
     }
   ],
   "roles": [
@@ -349,7 +349,7 @@
       "name": "业务主快照",
       "location": "MySQL · hr_system.system_snapshots",
       "description": "启用 MySQL 后使用 default 快照行持久化人员、考勤、申请等业务。人员工号为独立文本字段 employeeNo，入职日期沿用 joinDate；内部 id 及 employeeId 关联不变。采用共享 JSON 快照模型，并非按每种实体拆分关系表。",
-      "backup": "发布停写备份沿用对应历史流程；新增每日工具采用前后相等的事务性SQL转储夹持稳定文件窗口，生产启用待验收。"
+      "backup": "发布停写备份沿用对应历史流程；每日工具已启用，采用前后相等的事务性SQL转储夹持稳定文件窗口，不重启业务。"
     },
     {
       "name": "JSON 数据",
@@ -384,7 +384,7 @@
     {
       "name": "每日恢复备份",
       "location": "/var/backups/hr-system/daily/YYYY-MM-DD_HH-MM-SS+0800-随机后缀",
-      "description": "生产程序、实际数据、有效HR环境、相关服务配置及启用时的MySQL转储，包含私密资料，仅在服务器保存。已开发、待安装验收；不包含内存会话。",
+      "description": "生产程序、实际数据、有效HR环境、相关服务配置及启用时的MySQL转储，包含私密资料，仅在服务器保存。2026-11-18已安装并校验初始实际备份；不包含内存会话，不等于已做数据库恢复演练。",
       "backup": "root0700目录/0600文件，SHA256和归档成员校验后原子发布，保留全部；同机备份，异地或OSS副本待配置。"
     }
   ],
@@ -543,7 +543,7 @@
     },
     {
       "name": "每日备份状态",
-      "value": "2026-11-18工具开发及专项验证完成；hr-system-backup.timer生产安装待回执，每天02:00 Asia/Shanghai，备份地址123.56.175.4:/var/backups/hr-system/daily/（root私有）"
+      "value": "2026-11-18固定5bf0d0ec19d676f5c31056e3b1126eb174c4efba返回DAILY_BACKUP_READY，实际systemd备份已校验，timer启用；每天02:00 Asia/Shanghai，下一次2026-11-19T02:00:00+08:00；123.56.175.4:/var/backups/hr-system/daily/（root私有）"
     }
   ],
   "deploymentSteps": [
@@ -570,6 +570,10 @@
     {
       "title": "恢复与记录",
       "description": "权限变更失败仅从本工具受保护清单恢复原元数据；业务代码失败恢复对应内容，同时保留已有源码保护与上线后数据。完整灾难恢复须确认备份时间点。当前已成功，不为补记文档重复运行加固或重启服务。"
+    },
+    {
+      "title": "每日备份已安装验收",
+      "description": "固定5bf0d0ec工具返回DAILY_BACKUP_READY，直接备份和实际systemd服务新增备份均校验后启用计时器。最新初始时间2026-11-18 20:00:23+08，下一计划2026-11-19 02:00+08；不重复安装补记文档，不改业务代码或源码权限。"
     }
   ],
   "commands": [
@@ -614,7 +618,7 @@
       "code": "hr-system-backup --list\nsystemctl list-timers hr-system-backup.timer --all\nhr-system-backup --verify /var/backups/hr-system/daily/所选时间戳目录"
     }
   ],
-  "releaseBoundary": "当前生产性能版本固定为 83868e43a430652ab1cb8be4f3c18038c47df30f，使用 apply-startup-performance.py 定向修补server/auth/index/client-auth并安装Store/App/Dashboard及固定架构HTML，保留已上线人员导出和组织授权，不整体部署短信开发版本。用户报告STARTUP_PERFORMANCE_OK，代表脚本备份、代码安装、静态传输与原JSON/配置/MySQL快照不变自检通过；未读取真实人员或账号资料。独立公网核验index/auth/store/app/dashboard/xlsx六文件均200且解压前后源码摘要匹配，支持ETag与304，静态必须重验证；认证状态200正常、API保持no-store无ETag，匿名导出/快照/组织设置401，私有配置和账号路径404。SheetJS传输由951904字节降至335530字节，未变资源后续304不重复传主体；这些为公开资源实测，不代表整体登录加速倍数。完整回归188项187通过1跳过，生产兼容候选前端10和HTTP8通过，固定代码CI成功。未进行真实人员数据或浏览器可视验收。验收记录和重新生成的HTML仅更新本地/GitHub，服务器保持固定性能提交中的HTML，架构页面仍未开放静态URL；此前介绍视频保留原基线。人员导出固定提交103396ffb021dbf495dbd5cccbec6e342b22ea54的历史验收保留在当日记录和部署手册。 同日新增调休分类提醒为纯前端更新，已使用apply-leave-guidance.py静态发布；仅替换js/leave.js和固定HTML，代码备份后原子替换并核对服务PID保持。此流程不重启Node，不修改数据库、会话或私有配置，不要求既有用户重新登录。 请假提醒固定静态提交为f7bea5ee4f7333379af367f1fb4c043f6e0d75f5。用户报告LEAVE_GUIDANCE_OK，表示公开文件备份/原子替换、服务PID保持及健康检查通过；独立公网验证leave.js为200且SHA256为0e441635677052aeb704328c150785a7f10b71384555c717c3f15aa5e2e59a04，gzip解压一致、当前ETag返回304、旧ETag返回200新代码，认证正常、匿名快照401。没有重启服务或修改业务、账号、配置、数据库。未读取真实人员或做浏览器弹窗验收。随后验收记录和HTML仅更新本地/GitHub，服务器保留该静态发布提交中的HTML。 2026-11-17只增加源码保护约束、CODEOWNERS、文档和权限工具，不改前端/后端业务逻辑。只读GitHub查询main protected=false、rulesets为空；现有连接器无Administration管理能力，强制保护须所有者在设置页开启。服务器源码权限尚待加固执行，不宣称已锁定；需保留配置和数据原有可写权限。 固定权限工具代码c615cfaffccec17e1973af9fd28b8c232cef520b已同步GitHub，Linux CI 44016132823完成全部209项回归、0失败0跳过，架构校验通过；本地Windows专项10项8通过2平台跳过。仅说明工具交付和测试完成，服务器check/apply与仓库强制保护配置仍待所有者执行和复核。 随后所有者反馈首次生产预检拒绝：计划475路径/407文件，4个未保护可写程序，readyToApply=false，明确未修改权限；GitHub分支保护暂未设置。根据只读相对路径诊断，核对公开源码后仅将mysql2 TLS缓存、两项undici-types缓存类型声明和既有server/stop.bat精确纳入，不放宽私密排除、不升级依赖、不执行停止脚本；修正版尚待生产重试。独立公开登录页和认证健康HTTP 200。 四项名单修正版本地Python编译通过、专项11项9通过2 Windows平台跳过；新增测试验证四完整路径纳入、未知同名副本拒绝、只读检查无chmod/chown。修正版CI和生产成功仍须分别核验。 最终用户提供完整成功输出：预检479路径/411文件，issues全0、readyToApply=true，随后WEB_SOURCE_PROTECTED，serviceRestarted=false、privateDataTouched=false、rootCanStillMaintainCode=true；479是411文件加68目录，needsChange479是加固前计数。权限工具固定提交4529adf3f628ef1c68d4f3f22904214e2a8c68ba，修正版Linux CI 44038478618全部210通过、0失败0跳过，架构校验通过。成功标记表明源码root:hrsystem及模式、inode/观测SHA、应用读取、必要私有路径写入、原PID、Node/Nginx公开响应自检通过；元数据恢复清单保存在root专用目录，并非完整数据库或源码备份。独立公网认证状态/登录页/应用脚本均200，公开login/app摘要与加固前一致；未登录、未读取真实人员或数据库，不声称全业务或数据库内容独立验收。GitHub主分支保护用户暂未设置。后续AGENTS、验收记录和固定HTML只更新本地/GitHub，不重复执行加固、不重新部署开发业务版、不增加静态文档入口。 2026-11-18按所有者每日凌晨2点备份需求新增独立Python核心和安装器，不改业务前后端。计划将实际生产程序/依赖/配置、账号及组织等运行文件、相关systemd/Nginx配置、有效HR环境和MySQL转储保存至root私有/var/backups/hr-system/daily，按北京时间实际完成时间戳命名，保留全部。采用在线稳定窗口、前后事务转储一致、归档摘要与成员核验、持久化后原子发布；不停止或冻结业务，不改源码权限。安装会先完成直接备份和实际systemd服务各自的新备份校验，再启用显式Asia/Shanghai 02:00计时器，失败恢复工具/单元状态、保留旧备份。仅在收到DAILY_BACKUP_READY并核对下一触发时间后记为已启用；当前待生产安装验收。公开交付包含脚本、测试、恢复说明及同一HTML，不包括真实备份，不增加HTTP下载路径；同机备份以外的独立存储待配置。 固定备份工具提交5bf0d0ec19d676f5c31056e3b1126eb174c4efba已同步GitHub，CI 44299006377架构及Linux回归成功，全部229项通过、0失败0跳过；本地专项19项18通过1 Windows符号链接条件跳过。独立公开认证状态/登录页/应用脚本200，login/app摘要保持；未读取私有资料。已提供固定安装命令，生产DAILY_BACKUP_READY及下一触发时间仍待回执。",
+  "releaseBoundary": "当前生产性能版本固定为 83868e43a430652ab1cb8be4f3c18038c47df30f，使用 apply-startup-performance.py 定向修补server/auth/index/client-auth并安装Store/App/Dashboard及固定架构HTML，保留已上线人员导出和组织授权，不整体部署短信开发版本。用户报告STARTUP_PERFORMANCE_OK，代表脚本备份、代码安装、静态传输与原JSON/配置/MySQL快照不变自检通过；未读取真实人员或账号资料。独立公网核验index/auth/store/app/dashboard/xlsx六文件均200且解压前后源码摘要匹配，支持ETag与304，静态必须重验证；认证状态200正常、API保持no-store无ETag，匿名导出/快照/组织设置401，私有配置和账号路径404。SheetJS传输由951904字节降至335530字节，未变资源后续304不重复传主体；这些为公开资源实测，不代表整体登录加速倍数。完整回归188项187通过1跳过，生产兼容候选前端10和HTTP8通过，固定代码CI成功。未进行真实人员数据或浏览器可视验收。验收记录和重新生成的HTML仅更新本地/GitHub，服务器保持固定性能提交中的HTML，架构页面仍未开放静态URL；此前介绍视频保留原基线。人员导出固定提交103396ffb021dbf495dbd5cccbec6e342b22ea54的历史验收保留在当日记录和部署手册。 同日新增调休分类提醒为纯前端更新，已使用apply-leave-guidance.py静态发布；仅替换js/leave.js和固定HTML，代码备份后原子替换并核对服务PID保持。此流程不重启Node，不修改数据库、会话或私有配置，不要求既有用户重新登录。 请假提醒固定静态提交为f7bea5ee4f7333379af367f1fb4c043f6e0d75f5。用户报告LEAVE_GUIDANCE_OK，表示公开文件备份/原子替换、服务PID保持及健康检查通过；独立公网验证leave.js为200且SHA256为0e441635677052aeb704328c150785a7f10b71384555c717c3f15aa5e2e59a04，gzip解压一致、当前ETag返回304、旧ETag返回200新代码，认证正常、匿名快照401。没有重启服务或修改业务、账号、配置、数据库。未读取真实人员或做浏览器弹窗验收。随后验收记录和HTML仅更新本地/GitHub，服务器保留该静态发布提交中的HTML。 2026-11-17只增加源码保护约束、CODEOWNERS、文档和权限工具，不改前端/后端业务逻辑。只读GitHub查询main protected=false、rulesets为空；现有连接器无Administration管理能力，强制保护须所有者在设置页开启。服务器源码权限尚待加固执行，不宣称已锁定；需保留配置和数据原有可写权限。 固定权限工具代码c615cfaffccec17e1973af9fd28b8c232cef520b已同步GitHub，Linux CI 44016132823完成全部209项回归、0失败0跳过，架构校验通过；本地Windows专项10项8通过2平台跳过。仅说明工具交付和测试完成，服务器check/apply与仓库强制保护配置仍待所有者执行和复核。 随后所有者反馈首次生产预检拒绝：计划475路径/407文件，4个未保护可写程序，readyToApply=false，明确未修改权限；GitHub分支保护暂未设置。根据只读相对路径诊断，核对公开源码后仅将mysql2 TLS缓存、两项undici-types缓存类型声明和既有server/stop.bat精确纳入，不放宽私密排除、不升级依赖、不执行停止脚本；修正版尚待生产重试。独立公开登录页和认证健康HTTP 200。 四项名单修正版本地Python编译通过、专项11项9通过2 Windows平台跳过；新增测试验证四完整路径纳入、未知同名副本拒绝、只读检查无chmod/chown。修正版CI和生产成功仍须分别核验。 最终用户提供完整成功输出：预检479路径/411文件，issues全0、readyToApply=true，随后WEB_SOURCE_PROTECTED，serviceRestarted=false、privateDataTouched=false、rootCanStillMaintainCode=true；479是411文件加68目录，needsChange479是加固前计数。权限工具固定提交4529adf3f628ef1c68d4f3f22904214e2a8c68ba，修正版Linux CI 44038478618全部210通过、0失败0跳过，架构校验通过。成功标记表明源码root:hrsystem及模式、inode/观测SHA、应用读取、必要私有路径写入、原PID、Node/Nginx公开响应自检通过；元数据恢复清单保存在root专用目录，并非完整数据库或源码备份。独立公网认证状态/登录页/应用脚本均200，公开login/app摘要与加固前一致；未登录、未读取真实人员或数据库，不声称全业务或数据库内容独立验收。GitHub主分支保护用户暂未设置。后续AGENTS、验收记录和固定HTML只更新本地/GitHub，不重复执行加固、不重新部署开发业务版、不增加静态文档入口。 2026-11-18按所有者每日凌晨2点备份需求新增独立Python核心和安装器，不改业务前后端。计划将实际生产程序/依赖/配置、账号及组织等运行文件、相关systemd/Nginx配置、有效HR环境和MySQL转储保存至root私有/var/backups/hr-system/daily，按北京时间实际完成时间戳命名，保留全部。采用在线稳定窗口、前后事务转储一致、归档摘要与成员核验、持久化后原子发布；不停止或冻结业务，不改源码权限。安装会先完成直接备份和实际systemd服务各自的新备份校验，再启用显式Asia/Shanghai 02:00计时器，失败恢复工具/单元状态、保留旧备份。仅在收到DAILY_BACKUP_READY并核对下一触发时间后记为已启用；当前待生产安装验收。公开交付包含脚本、测试、恢复说明及同一HTML，不包括真实备份，不增加HTTP下载路径；同机备份以外的独立存储待配置。 固定备份工具提交5bf0d0ec19d676f5c31056e3b1126eb174c4efba已同步GitHub，CI 44299006377架构及Linux回归成功，全部229项通过、0失败0跳过；本地专项19项18通过1 Windows符号链接条件跳过。独立公开认证状态/登录页/应用脚本200，login/app摘要保持；未读取私有资料。已提供固定安装命令，生产DAILY_BACKUP_READY及下一触发时间仍待回执。 最终所有者提供完整DAILY_BACKUP_READY：/var/backups/hr-system/daily，最新初始备份2026-11-18_20-00-23+0800-38e49892be93，每天02:00 Asia/Shanghai，nextTrigger2026-11-19T02:00:00+08:00，scheduledServiceTested=true、serviceRestarted=false、sourcePermissionsChanged=false、retention=keep-all。按脚本结果记录为计时器已启用及实际systemd服务备份已验证，尚未声称观察到次日自动触发。安装后独立公网login/app/auth状态200且公开源码摘要与安装前一致。未读取真实备份或私密数据库资料，未执行实际恢复/数据库恢复演练。验收文档和HTML只更新本地/GitHub，不重复安装，不把文档更新带成业务部署；异地存储仍待配置。",
   "maintenance": [
     {
       "title": "维护同一个文件",
