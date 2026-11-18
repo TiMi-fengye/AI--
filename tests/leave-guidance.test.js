@@ -8,7 +8,7 @@ const path=require('node:path');
 function fixture(role='user') {
   const people=[{id:1,name:'演示甲',company:'420',building:'A'},{id:2,name:'演示乙',company:'联想外包',building:'A'},{id:3,name:'不可见人员',company:'420',building:'B'}];
   const balances={1:0,2:0,3:8},state={alerts:[],toasts:[],modals:[],mutations:[],closed:0};
-  const elements={leaveEmployee:{value:'1'},leaveType:{value:'compensatory'},leaveStart:{value:'2026-11-16'},leaveEnd:{value:'2026-11-16'},leaveHours:{value:'1'},leaveReason:{value:'保留此原因'},leaveHoursGroup:{hidden:true},leaveGuidance:{textContent:''}};
+  const elements={leaveEmployee:{value:'1'},leaveType:{value:'compensatory'},leaveStart:{value:'2026-11-16T09:00'},leaveEnd:{value:'2026-11-16T18:00'},leaveHours:{value:'1'},leaveReason:{value:'保留此原因'},leaveHoursGroup:{hidden:true},leaveGuidance:{textContent:''}};
   const user={role,employeeId:1,company:'420'};
   const context=vm.createContext({
     window:{alert:message=>state.alerts.push(message)},
@@ -24,7 +24,7 @@ function fixture(role='user') {
 test('420 zero balance alerts ERP leave categories and retains the whole application form',async()=>{
   const f=fixture();f.Leave.updateHoursField();
   assert.equal(f.elements.leaveHoursGroup.hidden,false);assert.match(f.state.alerts[0],/ERP.*法定年假、福利年假或带薪病假/);
-  assert.equal(f.elements.leaveReason.value,'保留此原因');assert.equal(f.elements.leaveStart.value,'2026-11-16');assert.equal(f.state.modals.length,0);assert.equal(f.state.closed,0);
+  assert.equal(f.elements.leaveReason.value,'保留此原因');assert.equal(f.elements.leaveStart.value,'2026-11-16T09:00');assert.equal(f.state.modals.length,0);assert.equal(f.state.closed,0);
   await f.Leave.saveApply();assert.equal(f.state.mutations.length,0);assert.equal(f.state.closed,0);
 });
 test('non-420 zero or negative balance directs the selected person to the leader and own platform',()=>{

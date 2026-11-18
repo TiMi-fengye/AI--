@@ -185,8 +185,8 @@ test('application success waits for server acknowledgement and repeated clicks d
 test('server rejection remains an error without success toast or closing the form', async () => {
   const f = fixture();
   Object.assign(f.elements, {
-    leaveEmployee: { value: '1' }, leaveType: { value: 'leave' }, leaveStart: { value: '2026-11-11' },
-    leaveEnd: { value: '2026-11-12' }, leaveHours: { value: '0' }, leaveReason: { value: '请假原因' }
+    leaveEmployee: { value: '1' }, leaveType: { value: 'leave' }, leaveStart: { value: '2026-11-11T09:00' },
+    leaveEnd: { value: '2026-11-12T18:00' }, leaveHours: { value: '0' }, leaveReason: { value: '请假原因' }
   });
   f.sandbox.Store.flushServerSync = async () => { throw new Error('服务端拒绝越权操作'); };
   await f.Leave.saveApply();

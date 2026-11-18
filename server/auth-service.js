@@ -93,6 +93,12 @@ function validateRows(rows, label, employeeIds) {
     if (employeeIds && !employeeIds.has(row.employeeId)) fail(403, "记录关联了无权访问的人员");
   }
 }
+function leaveTimestamp(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2})?$/.test(value) || value.slice(0, 4) === "0000") return null;
+  // Treat the supplied components as wall-clock values; do not apply the host timezone.
+  const date = new Date(value.length === 10 ? value + "T00:00:00.000Z" : value + ":00.000Z");
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, value.length) === value ? date.getTime() : null;
+}
 function validateRequest(record, kind) {
   if (!["pending", "approved", "rejected"].includes(record.status)) fail(400, "申请状态无效");
   if (kind === "overtime") {
@@ -100,9 +106,9 @@ function validateRequest(record, kind) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(record.date || "") || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== record.date || !Number.isFinite(Number(record.hours)) || Number(record.hours) <= 0 || Number(record.hours) > 24) fail(400, "加班日期或小时数无效");
     if (!["fee", "compensatory"].includes(record.overtimeType || "fee")) fail(400, "加班类型无效");
   } else {
-    if (!["leave", "compensatory", "shift", "sick", "personal", "annual", "marriage", "maternity", "other"].includes(record.type)) fail(400, "请假类型无效");
-    const start = new Date(record.startDate), end = new Date(record.endDate);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(record.startDate || "") || !/^\d{4}-\d{2}-\d{2}$/.test(record.endDate || "") || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end < start) fail(400, "请假起止日期无效");
+    if (!["leave", "compensatory", "shift", "sick", "personal", "annual", "statutoryAnnual", "welfareAnnual", "paidSick", "marriage", "maternity", "other"].includes(record.type)) fail(400, "请假类型无效");
+    const start = leaveTimestamp(record.startDate), end = leaveTimestamp(record.endDate);
+    if (start === null || end === null || record.startDate.length !== record.endDate.length || end < start || (record.startDate.length > 10 && end === start)) fail(400, "请假起止日期或时间无效");
     if (!Number.isFinite(Number(record.days)) || Number(record.days) <= 0 || Number(record.days) > 3660) fail(400, "请假天数无效");
     if (record.type === "compensatory" && (!Number.isFinite(Number(record.hours)) || Number(record.hours) <= 0)) fail(400, "调休小时数无效");
   }
