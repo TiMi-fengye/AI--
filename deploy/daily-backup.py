@@ -39,6 +39,17 @@ TAR_ARTIFACTS = {'app.tar.gz', 'runtime-data.tar.gz', 'service-config.tar.gz'}
 BASE_ARTIFACTS = TAR_ARTIFACTS | {'runtime-environment.json'}
 SERVICE_CONFIG_FILES = {'etc/systemd/system/' + SERVICE, 'etc/nginx/nginx.conf'}
 SERVICE_CONFIG_DIRS = {'etc/systemd/system/' + SERVICE + '.d', 'etc/hr-system', 'etc/nginx/sites-available'}
+# Reviewed public schema identifiers, never discovered from credential files or
+# inferred from dump contents. Every business and identity table is included in
+# the existing whole-database transactional dump.
+RELATIONAL_TABLES = frozenset({
+    'hr_schema_meta', 'hr_employees', 'hr_attendance', 'hr_overtime', 'hr_leave_requests',
+    'hr_settlements', 'hr_departments', 'hr_update_logs', 'hr_performance',
+    'hr_approval_notifications', 'hr_approval_history', 'hr_settlement_records',
+    'hr_notification_deliveries', 'hr_notification_parameters', 'hr_performance_scores',
+    'hr_organization_nodes', 'hr_sync_properties', 'hr_auth_meta', 'hr_accounts',
+    'hr_account_buildings', 'hr_account_regions', 'hr_organization_option_keys',
+    'hr_organization_options', 'hr_organization_leaders'})
 
 
 class Refused(Exception):
@@ -238,6 +249,47 @@ def run(arguments, *, output=None, timeout=30):
     return result.stdout or b''
 
 
+def validate_storage_layout(layout):
+    require(isinstance(layout, dict) and set(layout) == {'model', 'schemaVersion', 'tables'},
+            'Invalid database storage description')
+    names = layout['tables']
+    require(isinstance(names, list) and
+            all(isinstance(name, str) and re.fullmatch(r'[a-z_]+', name) for name in names) and
+            names == sorted(set(names)),
+            'Invalid database table inventory')
+    if layout['model'] == 'legacy_snapshot':
+        require(type(layout['schemaVersion']) is int and layout['schemaVersion'] == 0 and
+                names == ['system_snapshots'], 'Unknown legacy database layout')
+    else:
+        require(layout['model'] == 'relational' and type(layout['schemaVersion']) is int and
+                layout['schemaVersion'] == 1 and
+                set(names) in (RELATIONAL_TABLES, RELATIONAL_TABLES | {'system_snapshots'}),
+                'Unknown relational database layout')
+    return layout
+
+
+def database_layout(settings):
+    """Read only metadata: fail closed on partial/unknown schema migrations."""
+    database = settings.get('database')
+    require(isinstance(database, str) and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_-]{0,63}', database),
+            'Invalid database identifier')
+    prefix = ['mysql', '--protocol=socket', '-uroot', database, '-NBe']
+    raw = run([*prefix, 'SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema=DATABASE() ORDER BY TABLE_NAME'])
+    try:
+        names = raw.decode('ascii').splitlines()
+    except UnicodeError:
+        raise Refused('Unreviewed database table identifiers')
+    if names == ['system_snapshots']:
+        return validate_storage_layout({'model': 'legacy_snapshot', 'schemaVersion': 0, 'tables': names})
+    require(set(names) in (RELATIONAL_TABLES, RELATIONAL_TABLES | {'system_snapshots'}),
+            'Incomplete or unreviewed database schema needs review')
+    marker = run([*prefix, 'SELECT schema_version,initialized,(SELECT COUNT(*) FROM hr_schema_meta) FROM hr_schema_meta WHERE id=1'])
+    require(marker.strip() == b'1\t1\t1', 'Relational migration is incomplete or unsupported')
+    identity = run([*prefix, 'SELECT meta_key,schema_version FROM hr_auth_meta ORDER BY meta_key'])
+    require(identity.strip() == b'organization\t1\nusers\t1', 'Relational identity migration is incomplete or unsupported')
+    return validate_storage_layout({'model': 'relational', 'schemaVersion': 1, 'tables': names})
+
+
 def system_value(name):
     return run(['systemctl', 'show', SERVICE, '-p', name, '--value']).decode().strip()
 
@@ -285,6 +337,7 @@ def runtime():
                 'Local MySQL socket does not match the application port')
         query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='" + settings['database'] + "' AND table_type='BASE TABLE' AND ENGINE<>'InnoDB'"
         require(run(['mysql', '--protocol=socket', '-uroot', '-NBe', query]).strip() == b'0', 'Nontransactional tables need separate backup review')
+        settings['storage'] = database_layout(settings)
     port = int(environment.get('HR_PORT') or config.get('port') or 8080)
     require(0 < port < 65536, 'Invalid application port')
     files = system_value('EnvironmentFiles')
@@ -364,6 +417,9 @@ def validate_manifest(document):
     if mysql['enabled']:
         require(mysql.get('host') in ('localhost', '127.0.0.1') and mysql.get('port') == 3306 and
                 isinstance(mysql.get('database'), str) and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_-]{0,63}', mysql['database']), 'Invalid backup database target')
+        # Earlier verified backups predate storage metadata and remain valid.
+        if 'storage' in mysql:
+            validate_storage_layout(mysql['storage'])
     artifacts = document.get('artifacts')
     require(isinstance(artifacts, dict) and set(artifacts) == BASE_ARTIFACTS | ({'mysql.sql'} if mysql['enabled'] else set()), 'Backup artifact set is incomplete')
     for name, item in artifacts.items():

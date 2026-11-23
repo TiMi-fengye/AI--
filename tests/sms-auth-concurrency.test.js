@@ -11,7 +11,7 @@ const { spawnSync } = require("node:child_process");
 const { createSmsVerification } = require("../server/sms-verification");
 
 const root = path.resolve(__dirname, "..");
-const publicServerFiles = ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js"];
+const publicServerFiles = ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js", "mysql-store.js", "mysql-auth-store.js"];
 
 function temporary(t) {
   const directory = fs.mkdtempSync(path.join(root, ".sms-auth-isolated-"));
@@ -133,7 +133,7 @@ function configurationFixture(t, value, { raw = false, directoryInstead = false,
     });
   `;
   // A narrow process environment avoids inheriting real HR/SMS credentials.
-  const env = { HR_DATA_DIR: path.join(directory, "data"), HR_NO_OPEN: "1", ...environment };
+  const env = { HR_STORAGE_MODE: "file", HR_TEST_CONFIG_FILE: path.join(serverDirectory, "config.json"), HR_DATA_DIR: path.join(directory, "data"), HR_NO_OPEN: "1", ...environment };
   if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
   return spawnSync(process.execPath, ["-e", child], { cwd: directory, env, encoding: "utf8", timeout: 10000 });
 }

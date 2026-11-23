@@ -29,4 +29,36 @@ jobs:
         env:
           HR_SMS_ENABLED: 'false'
           HR_NO_OPEN: '1'
+          HR_STORAGE_MODE: 'file'
         run: node --test tests/*.test.js
+  mysql-relational:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          # Disposable CI database credentials, never production credentials.
+          MYSQL_ROOT_PASSWORD: hr-ci-disposable-only
+          MYSQL_ROOT_HOST: '%'
+          MYSQL_DATABASE: hr_test_bootstrap
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -phr-ci-disposable-only"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install existing MySQL driver at the declared baseline for integration tests
+        run: npm install --prefix server --no-save --package-lock=false --ignore-scripts --no-audit --no-fund mysql2@3.14.3
+      - name: Verify relational storage and migration on actual MySQL 8
+        env:
+          HR_TEST_MYSQL_URL: mysql://root:hr-ci-disposable-only@127.0.0.1:3306/hr_test_bootstrap
+          HR_REQUIRE_MYSQL_TESTS: 'true'
+          HR_SMS_ENABLED: 'false'
+          HR_NO_OPEN: '1'
+        run: node --test tests/mysql*.test.js

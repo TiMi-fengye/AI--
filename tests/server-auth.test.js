@@ -25,6 +25,8 @@ async function login(username) {
 }
 before(async () => {
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "hr-auth-tests-"));
+  process.env.HR_STORAGE_MODE = "file";
+  process.env.HR_TEST_CONFIG_FILE = path.join(directory, "config.json");
   process.env.HR_DATA_DIR = directory;
   process.env.HR_NO_OPEN = "1";
   process.env.HR_SMS_ENABLED = "false";

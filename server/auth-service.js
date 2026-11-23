@@ -7,6 +7,7 @@ const zlib = require("node:zlib");
 const { isIP } = require("node:net");
 const { promisify } = require("node:util");
 const { isDeepStrictEqual } = require("node:util");
+const { AsyncLocalStorage } = require("node:async_hooks");
 const approvalWorkflow = require("./approval-workflow");
 const { createApprovalSmsSender, deliverEvent } = require("./approval-notifications");
 const scrypt = promisify(crypto.scrypt);
@@ -385,17 +386,38 @@ function organizationSettings(value) {
   }
   return result;
 }
-function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerification = null, approvalSms = {}, approvalSmsSender = null }) {
+function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerification = null, approvalSms = {}, approvalSmsSender = null, authStore = null, isReadOnly = () => false, storageStatus = () => null }) {
   const userFile = path.join(dataDir, "auth-users.json");
   const organizationFile = path.join(dataDir, "organization-settings.json");
   let users = Object.create(null);
-  try { const data = JSON.parse(fs.readFileSync(userFile, "utf8")); for (const [key, user] of Object.entries(data)) users[key] = user; }
-  catch (error) { if (error.code !== "ENOENT") throw new Error("账号文件无法读取，请检查备份和文件权限"); }
+  if (!authStore) {
+    try { const data = JSON.parse(fs.readFileSync(userFile, "utf8")); for (const [key, user] of Object.entries(data)) users[key] = user; }
+    catch (error) { if (error.code !== "ENOENT") throw new Error("账号文件无法读取，请检查备份和文件权限"); }
+  }
+  const userContext = new AsyncLocalStorage();
+  function currentUsers() { return userContext.getStore()?.users || users; }
+  async function refreshUsers() {
+    if (!authStore) return;
+    const fresh = await authStore.readUsers();
+    const context = userContext.getStore();
+    if (context) context.users = fresh;
+    else users = fresh;
+  }
+  async function withRequestContext(action) {
+    if (userContext.getStore()) return action();
+    const state = { users: authStore ? await authStore.readUsers() : users, dirty: false };
+    return userContext.run(state, action);
+  }
+  function writable() { if (isReadOnly()) fail(503, "数据库迁移校验中，系统暂为只读，请稍后重试"); }
   const sessions = new Map(), attempts = new Map();
   const sms = smsVerification || { required: false, configured: false };
   const approvalSender = approvalSmsSender || createApprovalSmsSender(approvalSms);
-  let notificationsRunning = false;
+  let notificationsRunning = false, notificationResumeTimer = null;
   function scheduleNotifications() {
+    if (isReadOnly()) {
+      if (!notificationResumeTimer) { notificationResumeTimer = setTimeout(() => { notificationResumeTimer = null; scheduleNotifications(); }, 1000); notificationResumeTimer.unref?.(); }
+      return;
+    }
     if (notificationsRunning) return;
     notificationsRunning = true;
     setImmediate(async () => {
@@ -405,7 +427,13 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         for (const source of snapshot.approvalOutbox || []) {
           if (source.status !== "pending" && !(source.status === "blocked" && approvalSender)) continue;
           const event = clone(source);
-          await deliverEvent(event, users, approvalSender, async () => serialized(async () => {
+          const checkedSender = approvalSender && (async message => {
+            writable();
+            const fresh = authStore ? await authStore.readUsers() : currentUsers();
+            if (!Object.values(fresh).some(account => account.role === "region_manager" && (account.regions || []).includes(event.region) && account.phone === message.phone)) fail(403, "通知收件权限已变化");
+            return approvalSender(message);
+          });
+          await deliverEvent(event, currentUsers(), checkedSender, async () => serialized(async () => {
             const latest = normalizeSnapshot(await readSnapshot());
             if (!(latest.approvalOutbox || []).some(row => row.id === event.id)) throw new Error("Notification queue record was removed");
             latest.approvalOutbox = latest.approvalOutbox.map(row => row.id === event.id ? clone(event) : row);
@@ -427,22 +455,50 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     });
   }
   let queue = Promise.resolve();
-  function serialized(action) { const task = queue.then(action); queue = task.catch(() => {}); return task; }
-  function saveUsers() { writeAtomic(userFile, users); }
-  function setupRequired() { return !Object.values(users).some(u => u.role === "admin"); }
+  function serialized(action) {
+    const outer = userContext.getStore();
+    const task = queue.then(async () => {
+      if (!authStore) return action();
+      let committed;
+      const result = await authStore.transaction(async () => {
+        const state = { users: await authStore.readUsers(), dirty: false };
+        const value = await userContext.run(state, action);
+        if (state.dirty) { writable(); await authStore.writeUsers(state.users); }
+        committed = state.users;
+        return value;
+      });
+      users = committed;
+      if (outer) outer.users = committed;
+      return result;
+    });
+    queue = task.catch(() => {});
+    return task;
+  }
+  function saveUsers() {
+    writable();
+    if (authStore) {
+      const state = userContext.getStore();
+      if (!state) throw new Error("Account writes require the shared SQL unit of work");
+      state.dirty = true;
+    } else writeAtomic(userFile, currentUsers());
+  }
+  function setupRequired() { return !Object.values(currentUsers()).some(u => u.role === "admin"); }
   function getUser(req) {
     const cookie = String(req.headers.cookie || "").split(";").map(part => part.trim()).find(part => part.startsWith(COOKIE + "="));
     if (!cookie) return null;
     const token = cookie.substring(COOKIE.length + 1);
     const session = sessions.get(token);
     if (!session) return null;
-    if (session.expires <= Date.now() || !Object.prototype.hasOwnProperty.call(users, session.username)) { sessions.delete(token); return null; }
-    return publicUser(session.username, users[session.username]);
+    if (session.expires <= Date.now() || !Object.prototype.hasOwnProperty.call(currentUsers(), session.username)) { sessions.delete(token); return null; }
+    const account = currentUsers()[session.username];
+    if (session.passwordHash !== account.passwordHash || session.passwordSalt !== account.passwordSalt) { sessions.delete(token); return null; }
+    return publicUser(session.username, account);
   }
   function startSession(req, res, username) {
     for (const [token, session] of sessions) if (session.expires < Date.now()) sessions.delete(token);
     const token = crypto.randomBytes(32).toString("hex");
-    sessions.set(token, { username, expires: Date.now() + SESSION_MS });
+    const account = currentUsers()[username];
+    sessions.set(token, { username, expires: Date.now() + SESSION_MS, passwordHash: account.passwordHash, passwordSalt: account.passwordSalt });
     const secure = req.socket.encrypted || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
     res.setHeader("Set-Cookie", COOKIE + "=" + token + "; HttpOnly; SameSite=Lax; Path=/; Max-Age=" + SESSION_MS / 1000 + (secure ? "; Secure" : ""));
   }
@@ -475,7 +531,8 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     if (!sms.configured) fail(503, "短信服务尚未配置，请联系管理员");
     return sms.verify({ phone, purpose, challengeId: body.smsChallengeId, code: body.smsCode });
   }
-  function readOrganization() {
+  async function readOrganization() {
+    if (authStore) return organizationSettings(await authStore.readOrganization());
     try { return organizationSettings(JSON.parse(fs.readFileSync(organizationFile, "utf8"))); }
     catch (error) {
       if (error.code === "ENOENT") return { schemaVersion: 1, revision: 0, options: {} };
@@ -484,8 +541,10 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     }
   }
   async function organizationView(actor) {
-    const configured = readOrganization();
+    const configured = await readOrganization();
     const snapshot = normalizeSnapshot(await readSnapshot());
+    await refreshUsers();
+    if (authStore && actor) actor = currentUsers()[actor.username] ? publicUser(actor.username, currentUsers()[actor.username]) : null;
     const options = {};
     for (const [key, field] of Object.entries(ORGANIZATION_OPTIONS)) {
       // Explicitly configured lists are authoritative, including unused or empty options.
@@ -497,7 +556,7 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     // Current authorized accounts are the only display source. Historical manual
     // names remain in the private backup/configuration but are never displayed.
     // Registration and login do not grant a role or derive one from a job title.
-    for (const account of Object.values(users)) if (account.role === "leader" && Array.isArray(account.buildings)) {
+    for (const account of Object.values(currentUsers())) if (account.role === "leader" && Array.isArray(account.buildings)) {
       const employee = positiveId(account.employeeId) ? snapshot.employees.find(row => row.id === account.employeeId) : null;
       const name = text(employee && employee.name) || text(account.name);
       if (!name) continue;
@@ -515,10 +574,11 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     } else if (!actor || actor.role !== "admin") buildingLeaders = [];
     return { schemaVersion: 1, revision: configured.revision, options, buildingLeaders: clone(buildingLeaders) };
   }
-  async function handle(req, res, url) {
+  async function handleRequest(req, res, url) {
     if (!(url.startsWith("/api/auth/") || url.startsWith("/api/approvals/") || url === "/api/data/snapshot.json" || url === "/api/organization/options" || url === "/api/organization/settings" || url === "/api/employees/export")) return false;
     try {
       checkOrigin(req);
+      if (!["GET", "HEAD"].includes(req.method)) writable();
       if (url.startsWith("/api/approvals/")) requireUser(req);
       const approvalMatch = /^\/api\/approvals\/(overtime|leaveRequests)\/([1-9][0-9]*)$/.exec(url);
       const retryMatch = /^\/api\/approvals\/notifications\/([a-f0-9-]{36})\/retry$/.exec(url);
@@ -531,7 +591,7 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
           const result = approvalWorkflow.transition(snapshot, approvalMatch[1], Number(approvalMatch[2]), actor, body.decision);
           ensureBalance(result.snapshot);
           if (result.notification) {
-            const managers = Object.values(users).filter(user => user.role === "region_manager" && Array.isArray(user.regions) && user.regions.includes(result.notification.region));
+            const managers = Object.values(currentUsers()).filter(user => user.role === "region_manager" && Array.isArray(user.regions) && user.regions.includes(result.notification.region));
             if (!approvalSender || !managers.length) { result.notification.status = "blocked"; result.notification.reason = !approvalSender ? "sms_not_configured" : "no_region_manager"; }
           }
           await writeSnapshot(result.snapshot);
@@ -542,7 +602,9 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
       } else if (url === "/api/approvals/notifications" && req.method === "GET") {
         requireUser(req);
         await queue;
+        await refreshUsers();
         const snapshot = normalizeSnapshot(await readSnapshot()), query = new URL(req.url, "http://localhost").searchParams;
+        await refreshUsers();
         const actor = requireUser(req);
         if (!["admin", "leader", "region_manager"].includes(actor.role)) fail(403, "无权查看审批短信状态");
         const kind = query.get("kind"), id = query.get("id");
@@ -571,7 +633,9 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         const initialActor = requireUser(req);
         if (!["admin", "leader"].includes(initialActor.role)) fail(403, "仅管理员和楼长可导出人员信息");
         await queue;
+        await refreshUsers();
         const snapshot = await readSnapshot();
+        await refreshUsers();
         // A queue/read wait may outlive a changed assignment or deleted session.
         // Use current server permissions, never client filters or cached roles.
         const actor = requireUser(req);
@@ -579,11 +643,13 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         sendJson(res, 200, personnelExport(snapshot, actor));
       } else if (url === "/api/organization/options" && req.method === "GET") {
         await queue;
+        await refreshUsers();
         const view = await organizationView(getUser(req));
         sendJson(res, 200, { ok: true, options: view.options });
       } else if (url === "/api/organization/settings" && req.method === "GET") {
         requireUser(req);
         await queue;
+        await refreshUsers();
         sendJson(res, 200, { ok: true, ...(await organizationView(requireUser(req))) });
       } else if (url === "/api/organization/settings" && req.method === "POST") {
         requireAdmin(req);
@@ -593,16 +659,18 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         if (!Object.prototype.hasOwnProperty.call(body, "options")) fail(400, "请提供组织配置内容");
         await serialized(async () => {
           requireAdmin(req);
-          const current = readOrganization();
+          const current = await readOrganization();
           if (body.revision !== current.revision) fail(409, "组织配置已更新，请刷新后重试");
           const incoming = organizationSettings(body);
           const next = organizationSettings({ ...current, options: { ...current.options, ...incoming.options }, revision: current.revision + 1 });
-          writeAtomic(organizationFile, next);
+          writable();
+          if (authStore) await authStore.writeOrganization(next);
+          else writeAtomic(organizationFile, next);
         });
         sendJson(res, 200, { ok: true, ...(await organizationView(requireAdmin(req))) });
       } else if (url === "/api/auth/status" && req.method === "GET") sendJson(res, 200, {
         ok: true, setupRequired: setupRequired(), setupAllowed: isLocalSetup(req),
-        smsVerificationRequired: !!sms.required, smsConfigured: !!sms.configured
+        smsVerificationRequired: !!sms.required, smsConfigured: !!sms.configured, storage: storageStatus()
       });
       else if (url === "/api/auth/sms-code" && req.method === "POST") {
         const body = await readJson(req, 4096);
@@ -634,7 +702,7 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         if (employee.phone && employee.phone !== phone) fail(400, "人员手机号必须与注册手机号一致");
         employee.phone = phone;
         await serialized(async () => {
-          if (Object.prototype.hasOwnProperty.call(users, phone) || Object.values(users).some(u => u.phone === phone)) fail(409, "该手机号已注册，请直接登录");
+          if (Object.prototype.hasOwnProperty.call(currentUsers(), phone) || Object.values(currentUsers()).some(u => u.phone === phone)) fail(409, "该手机号已注册，请直接登录");
           const snapshot = normalizeSnapshot(await readSnapshot());
           if (snapshot.employees.some(e => e.phone === phone)) fail(409, "该手机号已有人员档案，请联系管理员绑定账号");
           const smsTicket = verifySms(phone, "register", body);
@@ -643,20 +711,20 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
           const user = { name: employee.name, phone, employeeId: id, role: "user", buildings: [], passwordHash: password.hash, passwordSalt: password.salt, createdAt: new Date().toISOString() };
           snapshot.employees.push({ ...employee, id, createdAt: user.createdAt, registrationSource: "phone" });
           snapshot.revision++;
-          users[phone] = user;
+          currentUsers()[phone] = user;
           try { saveUsers(); await writeSnapshot(snapshot); }
-          catch (error) { delete users[phone]; saveUsers(); throw error; }
+          catch (error) { delete currentUsers()[phone]; saveUsers(); throw error; }
           if (smsTicket) sms.consume(smsTicket);
         });
-        startSession(req, res, phone); sendJson(res, 201, { ok: true, user: publicUser(phone, users[phone]) });
+        startSession(req, res, phone); sendJson(res, 201, { ok: true, user: publicUser(phone, currentUsers()[phone]) });
       } else if (url === "/api/auth/login" && req.method === "POST") {
         const body = await readJson(req, 4096), username = text(body.username);
         rateLimit(req, "login-total", 100);
         rateLimit(req, "login:" + username, 15);
         if (!username || typeof body.password !== "string" || body.password.length > 256 || username.length > 100) fail(400, "账号或密码格式错误");
         await serialized(async () => {
-          const key = Object.prototype.hasOwnProperty.call(users, username) ? username : Object.keys(users).find(key => users[key].phone === username);
-          const user = key ? users[key] : null;
+          const key = Object.prototype.hasOwnProperty.call(currentUsers(), username) ? username : Object.keys(currentUsers()).find(key => currentUsers()[key].phone === username);
+          const user = key ? currentUsers()[key] : null;
           if (!(await validPassword(body.password, user))) fail(401, "手机号、账号或密码不正确");
           // A phone-bound ordinary/leader account cannot bypass SMS by using
           // an old username alias. Non-phone administrator accounts retain
@@ -680,15 +748,15 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         rateLimit(req, "password:" + current.username, 15);
         validatePassword(body.newPassword, current.role === "admin" ? 12 : 8);
         await serialized(async () => {
-          if (typeof body.oldPassword !== "string" || !(await validPassword(body.oldPassword, users[current.username]))) fail(400, "原密码错误");
+          if (typeof body.oldPassword !== "string" || !(await validPassword(body.oldPassword, currentUsers()[current.username]))) fail(400, "原密码错误");
           const password = await hashPassword(body.newPassword);
-          users[current.username].passwordHash = password.hash; users[current.username].passwordSalt = password.salt; saveUsers();
+          currentUsers()[current.username].passwordHash = password.hash; currentUsers()[current.username].passwordSalt = password.salt; saveUsers();
           invalidateUser(current.username);
         });
         startSession(req, res, current.username); sendJson(res, 200, { ok: true });
       } else if (url === "/api/auth/users" && req.method === "GET") {
         requireAdmin(req);
-        const result = Object.create(null); for (const [key, user] of Object.entries(users)) result[key] = { ...publicUser(key, user), createdAt: user.createdAt };
+        const result = Object.create(null); for (const [key, user] of Object.entries(currentUsers())) result[key] = { ...publicUser(key, user), createdAt: user.createdAt };
         sendJson(res, 200, { ok: true, users: result });
       } else if (url === "/api/auth/legacy-backup" && req.method === "POST") {
         const actor = requireUser(req);
@@ -730,7 +798,8 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         const username = text(body.username);
         if (!/^[a-zA-Z0-9_@.\-\u4e00-\u9fa5]{1,80}$/.test(username) || ["__proto__", "constructor", "prototype"].includes(username)) fail(400, "账号格式无效");
         await serialized(async () => {
-          const old = users[username];
+          requireAdmin(req);
+          const old = currentUsers()[username];
           const role = body.role === undefined && old ? old.role : body.role;
           if (!["admin", "leader", "region_manager", "user"].includes(role)) fail(400, "角色无效");
           if (username === actor.username && role !== "admin") fail(400, "不能取消当前管理员权限");
@@ -739,12 +808,12 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
           if (!name || name.length > 100) fail(400, "请填写姓名");
           let phone = body.phone === undefined && old ? old.phone || "" : text(body.phone);
           if (phone && !PHONE.test(phone)) fail(400, "手机号格式不正确");
-          if (phone && Object.entries(users).some(([key, user]) => key !== username && (key === phone || user.phone === phone))) fail(409, "手机号已被其他账号使用");
+          if (phone && Object.entries(currentUsers()).some(([key, user]) => key !== username && (key === phone || user.phone === phone))) fail(409, "手机号已被其他账号使用");
           let employeeId = body.employeeId === undefined && old ? old.employeeId : body.employeeId;
           if (employeeId === "" || employeeId === null) employeeId = null;
           const snapshot = normalizeSnapshot(await readSnapshot());
           if (employeeId != null && (!positiveId(employeeId) || !snapshot.employees.some(e => e.id === employeeId))) fail(400, "绑定的人员不存在");
-          if (employeeId && Object.entries(users).some(([key, user]) => key !== username && user.employeeId === employeeId)) fail(409, "该人员已有绑定账号");
+          if (employeeId && Object.entries(currentUsers()).some(([key, user]) => key !== username && user.employeeId === employeeId)) fail(409, "该人员已有绑定账号");
           const employee = employeeId ? snapshot.employees.find(e => e.id === employeeId) : null;
           if (!phone && employee && PHONE.test(text(employee.phone))) phone = text(employee.phone);
           if (PHONE.test(username)) {
@@ -754,7 +823,7 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
           if (old && old.phone && phone !== old.phone) fail(400, "暂不支持更换已有账号的登录手机号，请保留原手机号");
           if (employee && phone && !employee.phone) fail(400, "请先在所选人员档案中填写相同的手机号，再关联登录账号");
           if (employee && employee.phone && phone && employee.phone !== phone) fail(400, "登录手机号与所选人员档案手机号不一致，请核对关联人员");
-          if (phone && Object.entries(users).some(([key, user]) => key !== username && (key === phone || user.phone === phone))) fail(409, "手机号已被其他账号使用");
+          if (phone && Object.entries(currentUsers()).some(([key, user]) => key !== username && (key === phone || user.phone === phone))) fail(409, "手机号已被其他账号使用");
           const buildings = role === "leader" ? (body.buildings === undefined && old ? old.buildings || [] : body.buildings) : [];
           if (!Array.isArray(buildings) || buildings.some(b => typeof b !== "string" || !b.trim() || b.length > 100) || (role === "leader" && !buildings.length)) fail(400, "请为楼长分配负责楼栋");
           const regions = role === "region_manager" ? (body.regions === undefined && old ? old.regions || [] : body.regions) : [];
@@ -763,20 +832,22 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
           const user = { ...(old || {}), name, phone, role, employeeId: employeeId || null, buildings: [...new Set(buildings.map(b => b.trim()))], regions: [...new Set(regions.map(region => region.trim()))], createdAt: old ? old.createdAt : new Date().toISOString() };
           if (body.password) { validatePassword(body.password, role === "admin" ? 12 : 8); const password = await hashPassword(body.password); user.passwordHash = password.hash; user.passwordSalt = password.salt; }
           else if (!old) fail(400, "新账号必须设置密码");
-          users[username] = user; saveUsers();
+          currentUsers()[username] = user; saveUsers();
           if (body.password) invalidateUser(username);
         });
         if (body.password && username === actor.username) startSession(req, res, username);
-        sendJson(res, 200, { ok: true, user: publicUser(username, users[username]) });
+        sendJson(res, 200, { ok: true, user: publicUser(username, currentUsers()[username]) });
       } else if (url.startsWith("/api/auth/users/") && req.method === "DELETE") {
         const actor = requireAdmin(req), username = decodeURIComponent(url.substring("/api/auth/users/".length));
         if (username === "admin" || username === actor.username) fail(400, "不能删除默认管理员或当前账号");
-        await serialized(async () => { if (!Object.prototype.hasOwnProperty.call(users, username)) fail(404, "账号不存在"); delete users[username]; saveUsers(); invalidateUser(username); });
+        await serialized(async () => { requireAdmin(req); if (!Object.prototype.hasOwnProperty.call(currentUsers(), username)) fail(404, "账号不存在"); delete currentUsers()[username]; saveUsers(); invalidateUser(username); });
         sendJson(res, 200, { ok: true });
       } else if (url === "/api/data/snapshot.json" && req.method === "GET") {
         requireUser(req);
         await queue;
+        await refreshUsers();
         const snapshot = await readSnapshot();
+        await refreshUsers();
         sendJson(res, 200, scopedSnapshot(snapshot, requireUser(req)));
       } else if (url === "/api/data/snapshot.json" && req.method === "POST") {
         const user = requireUser(req), incoming = await readJson(req);
@@ -784,13 +855,13 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
           // 进入写队列后重新读取权限，避免排队期间已被撤权的请求继续写入。
           const currentUser = requireUser(req);
           const next = mergeSnapshot(await readSnapshot(), incoming, currentUser);
-          for (const account of Object.values(users)) {
+          for (const account of Object.values(currentUsers())) {
             const employee = next.employees.find(e => e.id === account.employeeId);
             if (employee && account.phone && String(employee.phone || "") !== account.phone) fail(403, "请通过账号管理变更登录手机号");
           }
           await writeSnapshot(next);
           let namesChanged = false;
-          for (const account of Object.values(users)) {
+          for (const account of Object.values(currentUsers())) {
             const employee = next.employees.find(e => e.id === account.employeeId);
             if (employee && employee.name && employee.name !== account.name) { account.name = employee.name; namesChanged = true; }
           }
@@ -809,8 +880,13 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     }
     return true;
   }
+  async function handle(req, res, url) {
+    if (!(url.startsWith("/api/auth/") || url.startsWith("/api/approvals/") || url === "/api/data/snapshot.json" || url === "/api/organization/options" || url === "/api/organization/settings" || url === "/api/employees/export")) return false;
+    try { return await withRequestContext(() => handleRequest(req, res, url)); }
+    catch (_) { sendJson(res, 503, { ok: false, message: "数据库服务暂不可用，请联系管理员" }); return true; }
+  }
   scheduleNotifications();
-  return { handle, getUser, requireUser, requireAdmin, checkOrigin, serialized };
+  return { handle, getUser, requireUser, requireAdmin, checkOrigin, serialized, refreshUsers, withRequestContext };
 }
 
 // 静态服务只开放应用资源，任何服务端配置、数据、隐藏路径均不能直接下载。

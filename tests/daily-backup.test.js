@@ -229,14 +229,74 @@ test('backup interruption cleans only its incomplete stage and leaves earlier ba
  print('ok')`),'ok');
 });
 
-test('SQL snapshots use deterministic transactional local-socket options without exposing passwords in process arguments',()=>{
+test('whole-database dumps use deterministic transactional local-socket options without exposing passwords in process arguments',()=>{
   assert.equal(run(`from unittest.mock import patch
 with tempfile.TemporaryDirectory(prefix='dump-',dir=FIXTURES) as directory:
  target=pathlib.Path(directory)/'mysql.sql';seen=[]
  def command(args,**kwargs):seen.extend(args);kwargs['output'].write(b'SYNTHETIC MYSQL DUMP')
  with patch.object(m,'run',command):m.mysql_dump({'mysql':{'database':'synthetic_hr'}},target)
  assert {'--protocol=socket','-uroot','--single-transaction','--skip-comments','--skip-dump-date','--routines','--triggers','--events'}<=set(seen)
+ assert seen[-1]=='synthetic_hr' and 'system_snapshots' not in seen
  assert not any('password' in arg.lower() for arg in seen)
  assert target.read_bytes()==b'SYNTHETIC MYSQL DUMP'
+ print('ok')`),'ok');
+});
+
+test('backup schema inventory covers every business, approval, account and organization relation',()=>{
+  const expected=[...require('../server/mysql-store').TABLES,...require('../server/mysql-auth-store').AUTH_TABLES].sort();
+  assert.deepEqual(JSON.parse(run("print(json.dumps(sorted(m.RELATIONAL_TABLES)))")),expected);
+});
+
+test('database metadata recognizes legacy and complete relational layouts and refuses incomplete, unknown or partial identity migrations',()=>{
+  assert.equal(run(`from unittest.mock import patch
+settings={'database':'synthetic_hr'}
+def detect(names,marker=b'1\\t1\\t1\\n',identity=b'organization\\t1\\nusers\\t1\\n'):
+ seen=[]
+ def command(args,**kwargs):
+  seen.append(args[-1])
+  if 'information_schema.tables' in args[-1]:return ('\\n'.join(sorted(names))+'\\n').encode()
+  if 'hr_schema_meta' in args[-1]:return marker
+  if 'hr_auth_meta' in args[-1]:return identity
+  raise AssertionError('unreviewed metadata query')
+ with patch.object(m,'run',command):result=m.database_layout(settings)
+ assert all(query.startswith('SELECT ') and 'payload' not in query for query in seen)
+ return result
+assert detect(['system_snapshots'])['model']=='legacy_snapshot'
+for names in [m.RELATIONAL_TABLES,m.RELATIONAL_TABLES|{'system_snapshots'}]:
+ result=detect(names);assert result['model']=='relational' and result['schemaVersion']==1
+for names in [set(),{'system_snapshots','unreviewed_table'},m.RELATIONAL_TABLES-{'hr_accounts'},m.RELATIONAL_TABLES|{'unreviewed_table'}]:
+ rejected(lambda names=names:detect(names))
+for marker in [b'1\\t0\\t1\\n',b'2\\t1\\t1\\n',b'1\\t1\\t2\\n',b'']:
+ rejected(lambda marker=marker:detect(m.RELATIONAL_TABLES,marker=marker))
+for identity in [b'users\\t1\\n',b'organization\\t2\\nusers\\t1\\n',b'']:
+ rejected(lambda identity=identity:detect(m.RELATIONAL_TABLES,identity=identity))
+print('ok')`),'ok');
+});
+
+test('relational backup metadata is strict while earlier completed legacy backup manifests remain recoverable',()=>{
+  assert.equal(run(`with tempfile.TemporaryDirectory(prefix='relational-manifest-',dir=FIXTURES) as directory:
+ root=pathlib.Path(directory);backup,document=make_backup(root,True)
+ assert 'storage' not in document['runtime']['mysql']
+ m.verify_backup(backup,require_root=False)
+ layout={'model':'relational','schemaVersion':1,'tables':sorted(m.RELATIONAL_TABLES|{'system_snapshots'})}
+ document['runtime']['mysql']['storage']=layout;publish_manifest(backup,document)
+ assert m.verify_backup(backup,require_root=False)['runtime']['mysql']['storage']==layout
+ for change in [lambda value:value.update(model='unknown'),lambda value:value.update(schemaVersion=2),lambda value:value['tables'].remove('hr_approval_history'),lambda value:value['tables'].append('unreviewed'),lambda value:value.update(tables=[{}])]:
+  bad=copy.deepcopy(document);change(bad['runtime']['mysql']['storage']);rejected(lambda bad=bad:m.validate_manifest(bad))
+ print('ok')`),'ok');
+});
+
+test('relational SQL changes in accounts or approval rows trigger retry and all verified artifacts retain the storage inventory',()=>{
+  assert.equal(run(onlineSetup+`with tempfile.TemporaryDirectory(prefix='relational-window-',dir=FIXTURES) as directory:
+ root=pathlib.Path(directory);ctx,config,backups=online_fixture(root,True)
+ ctx['mysql']['storage']={'model':'relational','schemaVersion':1,'tables':sorted(m.RELATIONAL_TABLES|{'system_snapshots'})}
+ bodies=iter([b'EMPLOYEE+OLD-ACCOUNTS+APPROVAL',b'EMPLOYEE+NEW-ACCOUNTS+APPROVAL',b'EMPLOYEE+NEW-ACCOUNTS+NEW-APPROVAL',b'EMPLOYEE+NEW-ACCOUNTS+NEW-APPROVAL'])
+ def dump(context,destination):destination.write_bytes(next(bodies))
+ with ExitStack() as stack:
+  online_patches(stack,ctx,config,dump=dump);result=m.run_backup(ctx,backups,attempts=2)
+ document=m.verify_backup(pathlib.Path(result['backup']),require_root=False)
+ assert document['consistency']['attempt']==2 and document['runtime']['mysql']['storage']==ctx['mysql']['storage']
+ assert (pathlib.Path(result['backup'])/'mysql.sql').read_bytes()==b'EMPLOYEE+NEW-ACCOUNTS+NEW-APPROVAL'
+ assert (backups/'prior-complete/keep').read_bytes()==b'EXISTING BACKUP'
  print('ok')`),'ok');
 });

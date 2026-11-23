@@ -10,7 +10,6 @@ const python = process.platform === "win32" ? "python" : "python3";
 const script = path.resolve(__dirname, "../deploy/apply-dashboard-leaders.py");
 const canonical = value => value.replace(/\r\n/g, "\n").trimEnd() + "\n";
 const sha = value => crypto.createHash("sha256").update(canonical(value)).digest("hex");
-const current = canonical(fs.readFileSync(path.resolve(__dirname, "../server/auth-service.js"), "utf8"));
 const bridge = `import importlib.util,json,sys
 spec=importlib.util.spec_from_file_location('reviewed_leaders',sys.argv[1])
 module=importlib.util.module_from_spec(spec)
@@ -33,8 +32,10 @@ function invoke(value) {
 }
 const patches = invoke({ patches: true });
 assert.equal(patches.length, 3, "This release contains three reviewed organization-view edits");
-// The fixture comes from public source, so tests require neither a production
-// backup nor the private .delivery directory. Other auth behavior is untouched.
+// Preserve the original reviewed public fragments for this historical publisher.
+// Current organization reads are asynchronous SQL and no longer contain these
+// old anchors. No production backup or ignored .delivery file is required.
+const current = canonical('const fs = require("node:fs");\n' + patches.map(pair => pair[1]).join("\n"));
 let baseline = current;
 for (const [old, replacement] of patches) {
   assert.equal(baseline.split(replacement).length, 2, "Reviewed replacement must occur exactly once in public auth source");

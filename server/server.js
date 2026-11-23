@@ -7,11 +7,17 @@ const zlib = require("node:zlib");
 const gzipStatic = require("node:util").promisify(zlib.gzip);
 const { createSmsVerification } = require("./sms-verification");
 const { createAliyunSmsSender } = require("./sms-aliyun");
+const { createMySQLStore } = require("./mysql-store");
+const { createMySQLAuthStore } = require("./mysql-auth-store");
 
 // 读取配置
+// Explicit file-mode test processes may point at their own synthetic config;
+// normal MySQL production always keeps the established private config path.
+const CONFIG_PATH = process.env.HR_STORAGE_MODE === "file" && process.env.HR_TEST_CONFIG_FILE
+  ? path.resolve(process.env.HR_TEST_CONFIG_FILE) : path.join(__dirname, "config.json");
 let CONFIG = { port: 8080, staticIP: "" };
 try {
-  CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf-8"));
+  CONFIG = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf-8"));
   if (!CONFIG || typeof CONFIG !== "object" || Array.isArray(CONFIG)) throw new Error("Invalid server configuration");
   if (CONFIG.sms !== undefined && (!CONFIG.sms || typeof CONFIG.sms !== "object" || Array.isArray(CONFIG.sms) || (CONFIG.sms.enabled !== undefined && typeof CONFIG.sms.enabled !== "boolean"))) throw new Error("Invalid SMS configuration");
   if (CONFIG.approvalSms !== undefined && (!CONFIG.approvalSms || typeof CONFIG.approvalSms !== "object" || Array.isArray(CONFIG.approvalSms) || (CONFIG.approvalSms.enabled !== undefined && typeof CONFIG.approvalSms.enabled !== "boolean"))) throw new Error("Invalid approval SMS configuration");
@@ -23,12 +29,17 @@ const PORT = Number(process.env.HR_PORT || CONFIG.port || 8080);
 const HOST = process.env.HR_HOST || CONFIG.staticIP || "0.0.0.0";
 const ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = process.env.HR_DATA_DIR ? path.resolve(process.env.HR_DATA_DIR) : path.join(__dirname, "data");
+const STORAGE_MODE = process.env.HR_STORAGE_MODE || "mysql";
+if (!["mysql", "file"].includes(STORAGE_MODE)) throw new Error("存储模式无效，仅支持mysql或显式file开发模式");
 let MYSQL_POOL = null;
+let MYSQL_STORE = null;
+let MYSQL_AUTH_STORE = null;
+let storageInitialization = null;
 let MYSQL_SETTINGS = null;
 let FEISHU_TOKEN = { value: "", expiresAt: 0 };
 
 function saveConfig() {
-  fs.writeFileSync(path.join(__dirname, "config.json"), JSON.stringify(CONFIG, null, 2), "utf-8");
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(CONFIG, null, 2), "utf-8");
 }
 
 function mysqlSettings() {
@@ -47,48 +58,39 @@ function snapshotFilePath() {
   return path.join(DATA_DIR, "snapshot.json");
 }
 
+function isMigrationReadOnly() {
+  return STORAGE_MODE === "mysql" && fs.existsSync("/run/hr-system-relational-migration.hold");
+}
+function requireWritableStorage() {
+  if (isMigrationReadOnly()) { const error = new Error("数据库迁移校验中，系统暂为只读，请稍后重试"); error.status = 503; throw error; }
+}
 async function initMySQL() {
-  MYSQL_SETTINGS = mysqlSettings();
-  if (!MYSQL_SETTINGS.enabled) return;
-  let mysql;
-  try { mysql = require("mysql2/promise"); } catch (e) { throw new Error("MySQL 已启用，但未安装 mysql2 依赖"); }
-  if (!MYSQL_SETTINGS.password) throw new Error("MySQL 已启用，但未配置数据库密码");
-  MYSQL_POOL = mysql.createPool({
-    host: MYSQL_SETTINGS.host,
-    port: MYSQL_SETTINGS.port,
-    user: MYSQL_SETTINGS.user,
-    password: MYSQL_SETTINGS.password,
-    database: MYSQL_SETTINGS.database,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0,
-    charset: "utf8mb4"
-  });
-  await MYSQL_POOL.query("CREATE TABLE IF NOT EXISTS system_snapshots (snapshot_key VARCHAR(64) NOT NULL PRIMARY KEY, payload LONGTEXT NOT NULL, updated_at DATETIME(3) NOT NULL) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-  const [rows] = await MYSQL_POOL.query("SELECT snapshot_key FROM system_snapshots WHERE snapshot_key = 'default' LIMIT 1");
-  if (!rows.length && fs.existsSync(snapshotFilePath())) {
-    const raw = fs.readFileSync(snapshotFilePath(), "utf-8");
-    JSON.parse(raw);
-    await MYSQL_POOL.query("INSERT INTO system_snapshots (snapshot_key, payload, updated_at) VALUES ('default', ?, UTC_TIMESTAMP(3))", [raw]);
-  }
-  console.log("    MySQL 数据库已连接: " + MYSQL_SETTINGS.database + "@" + MYSQL_SETTINGS.host + ":" + MYSQL_SETTINGS.port);
+  if (STORAGE_MODE === "file") return;
+  if (!storageInitialization) storageInitialization = (async () => {
+    MYSQL_SETTINGS = mysqlSettings();
+    if (!MYSQL_SETTINGS.enabled || !MYSQL_SETTINGS.password) throw new Error("正式存储必须启用并配置MySQL，禁止自动回退文件存储");
+    let mysql;
+    try { mysql = require("mysql2/promise"); } catch (_) { throw new Error("MySQL驱动未安装，请先安装已声明的服务端依赖"); }
+    MYSQL_POOL = mysql.createPool({
+      host: MYSQL_SETTINGS.host, port: MYSQL_SETTINGS.port, user: MYSQL_SETTINGS.user,
+      password: MYSQL_SETTINGS.password, database: MYSQL_SETTINGS.database,
+      waitForConnections: true, connectionLimit: 10, queueLimit: 0, charset: "utf8mb4",
+      supportBigNumbers: true, bigNumberStrings: true
+    });
+    MYSQL_STORE = createMySQLStore(MYSQL_POOL, { isReadOnly: isMigrationReadOnly });
+    MYSQL_AUTH_STORE = createMySQLAuthStore(MYSQL_STORE, { isReadOnly: isMigrationReadOnly });
+    // Schema creation/import is a separate, backed-up migration, never startup.
+    await MYSQL_STORE.verifyInitialized();
+    await MYSQL_AUTH_STORE.verifyInitialized();
+  })();
+  return storageInitialization;
 }
-
-async function readMySQLSnapshot() {
-  if (!MYSQL_POOL) return null;
-  const [rows] = await MYSQL_POOL.query("SELECT payload FROM system_snapshots WHERE snapshot_key = 'default' LIMIT 1");
-  if (!rows.length) return null;
-  return JSON.parse(rows[0].payload);
-}
-
-async function writeMySQLSnapshot(snapshot) {
-  if (!MYSQL_POOL) return false;
-  const payload = JSON.stringify(snapshot);
-  await MYSQL_POOL.query("INSERT INTO system_snapshots (snapshot_key, payload, updated_at) VALUES ('default', ?, UTC_TIMESTAMP(3)) ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = UTC_TIMESTAMP(3)", [payload]);
-  // 保留一份本地快照作为灾备，不再作为线上数据源。
-  try { fs.mkdirSync(DATA_DIR, { recursive: true }); fs.writeFileSync(snapshotFilePath(), JSON.stringify(snapshot, null, 2), "utf-8"); } catch (e) { console.warn("本地快照备份写入失败: " + e.message); }
-  return true;
-}
+const authPersistence = STORAGE_MODE === "file" ? null : Object.fromEntries(
+  ["readUsers", "writeUsers", "readOrganization", "writeOrganization", "transaction"].map(method => [method, async (...args) => {
+    await initMySQL();
+    return MYSQL_AUTH_STORE[method](...args);
+  }])
+);
 
 async function feishuToken() {
   const f = CONFIG.feishu || {};
@@ -239,27 +241,32 @@ const auth = createAuthService({
   dataDir: DATA_DIR,
   approvalSms: approvalSmsSettings(),
   smsVerification,
+  authStore: authPersistence,
+  isReadOnly: isMigrationReadOnly,
+  storageStatus: () => ({ backend: STORAGE_MODE === "mysql" ? "mysql" : "file", model: STORAGE_MODE === "mysql" ? "relational" : "development", readOnly: isMigrationReadOnly() }),
   readSnapshot: async () => {
-    if (MYSQL_POOL) return readMySQLSnapshot();
+    if (STORAGE_MODE === "mysql") { await initMySQL(); return MYSQL_STORE.read(); }
     try { return JSON.parse(await fs.promises.readFile(snapshotFilePath(), "utf8")); }
     catch (error) { if (error.code === "ENOENT") return null; throw error; }
   },
   writeSnapshot: async snapshot => {
-    if (MYSQL_POOL) await writeMySQLSnapshot(snapshot);
+    requireWritableStorage();
+    if (STORAGE_MODE === "mysql") { await initMySQL(); await MYSQL_STORE.write(snapshot, { expectedRevision: snapshot.revision - 1 }); }
     else writeAtomic(snapshotFilePath(), snapshot);
   }
 });
 
-const server = http.createServer(async (req, res) => {
+async function handleRequest(req, res) {
   let url;
   try { url = new URL(req.url, "http://localhost").pathname; } catch { sendJson(res, 400, { ok: false, message: "请求地址无效" }); return; }
   if (url === "/") url = "/index.html";
+  if (url.startsWith("/api/") && !["GET", "HEAD"].includes(req.method) && isMigrationReadOnly()) { sendJson(res, 503, { ok: false, message: "数据库迁移校验中，系统暂为只读，请稍后重试" }); return; }
   if (await auth.handle(req, res, url)) return;
   if (url.startsWith("/api/wechat/") || /^\/api\/feishu\/(?:login-config|auth-url|auth-code|callback)$/.test(url)) {
     sendJson(res, 410, { ok: false, enabled: false, message: "第三方登录已停用，请使用手机号登录" }); return;
   }
   if (url.startsWith("/api/")) {
-    try { auth.checkOrigin(req); auth.requireAdmin(req); }
+    try { await auth.refreshUsers(); auth.checkOrigin(req); auth.requireAdmin(req); }
     catch (error) { sendJson(res, error.status || 500, { ok: false, message: error.message }); return; }
   }
 
@@ -340,6 +347,14 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(missing ? 404 : 500, { "Cache-Control": "no-store" });
     res.end(req.method === "HEAD" ? undefined : missing ? "Not Found" : "Resource unavailable");
   }
+}
+const server = http.createServer((req, res) => {
+  const run = () => handleRequest(req, res);
+  const operation = String(req.url || "").startsWith("/api/") ? auth.withRequestContext(run) : run();
+  Promise.resolve(operation).catch(() => {
+    if (!res.headersSent && !res.destroyed) sendJson(res, 503, { ok: false, message: "数据库服务暂不可用，请联系管理员" });
+    else if (!res.destroyed) res.end();
+  });
 });
 
 async function startServer() {
@@ -380,4 +395,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { server, startServer };
+module.exports = { server, startServer, initStorage: initMySQL, closeStorage: async () => { if (MYSQL_POOL) await MYSQL_POOL.end(); } };

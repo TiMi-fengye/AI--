@@ -43,7 +43,7 @@ async function fixture(t) {
   fs.mkdirSync(data);
   // Copy only explicitly public code. Loading server.js in this isolated tree
   // cannot read the workspace's private config.json, auth users or data files.
-  for (const file of ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js"]) {
+  for (const file of ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js", "mysql-store.js", "mysql-auth-store.js"]) {
     fs.copyFileSync(path.join(sourceRoot, "server", file), path.join(directory, "server", file));
   }
   const text = "/* 合成性能测试，不含真实人员 */\n" + "var syntheticValue = '示例字符串';\n".repeat(600);
@@ -59,7 +59,9 @@ async function fixture(t) {
     ]
   };
   fs.writeFileSync(path.join(data, "snapshot.json"), JSON.stringify(snapshot));
-  const previous = { HR_DATA_DIR: process.env.HR_DATA_DIR, HR_NO_OPEN: process.env.HR_NO_OPEN, HR_SMS_ENABLED: process.env.HR_SMS_ENABLED };
+  const previous = { HR_TEST_CONFIG_FILE: process.env.HR_TEST_CONFIG_FILE, HR_STORAGE_MODE: process.env.HR_STORAGE_MODE, HR_DATA_DIR: process.env.HR_DATA_DIR, HR_NO_OPEN: process.env.HR_NO_OPEN, HR_SMS_ENABLED: process.env.HR_SMS_ENABLED };
+  process.env.HR_STORAGE_MODE = "file";
+  process.env.HR_TEST_CONFIG_FILE = path.join(directory, "server", "config.json");
   process.env.HR_DATA_DIR = data;
   process.env.HR_NO_OPEN = "1";
   process.env.HR_SMS_ENABLED = "false";
