@@ -96,13 +96,11 @@ test("removing a person cannot cascade-delete records even when protected collec
   }
 });
 
-test("leaders retain existing building-scoped profile, check-out, overtime edit and approval operations", () => {
+test("leaders retain building-scoped profile, check-out and pending overtime edits without snapshot approval", () => {
   const source = snapshot(), incoming = scopedSnapshot(source, leader);
   incoming.employees[0].email = "synthetic@example.com";
   incoming.attendance[0].checkOut = "18:15";
   incoming.overtime[0].hours = 4;
-  incoming.overtime[0].status = "approved";
-  incoming.leaveRequests[0].status = "approved";
   incoming.attendance.push({ id: 103, employeeId: 3, date: "2026-11-18", checkIn: "08:30", status: "present" });
   incoming.overtime.push({ id: 203, employeeId: 3, date: "2026-11-18", hours: 1, overtimeType: "fee", status: "pending" });
   incoming.leaveRequests.push(requestRecord(303, 3, "welfareAnnual"));
@@ -110,8 +108,8 @@ test("leaders retain existing building-scoped profile, check-out, overtime edit 
   assert.equal(result.employees.find(employee => employee.id === 1).email, "synthetic@example.com");
   assert.equal(result.attendance.find(row => row.id === 101).checkOut, "18:15");
   assert.equal(result.overtime.find(row => row.id === 201).hours, 4);
-  assert.equal(result.overtime.find(row => row.id === 201).status, "approved");
-  assert.equal(result.leaveRequests.find(row => row.id === 301).status, "approved");
+  assert.equal(result.overtime.find(row => row.id === 201).status, "pending");
+  assert.equal(result.leaveRequests.find(row => row.id === 301).status, "pending");
   assert.equal(result.leaveRequests.find(row => row.id === 303).startDate, "2026-11-18T09:05");
   for (const key of collections) {
     assert.deepEqual(result[key].find(row => row.employeeId === 2), source[key].find(row => row.employeeId === 2));

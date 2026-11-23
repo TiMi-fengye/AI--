@@ -126,13 +126,13 @@ test("楼长只读写本楼栋，其他楼栋资料和记录在合并后仍保�
   assert.ok(!JSON.stringify(mine).includes("其他楼栋人员"));
   mine.employees[0].building = "楼栋B";
   assert.equal((await request("/api/data/snapshot.json", "POST", mine, leader)).status, 403);
-  mine.employees[0].building = "楼栋A"; mine.employees[0].employeeNo = " 000044 "; mine.overtime[0].status = "approved";
+  mine.employees[0].building = "楼栋A"; mine.employees[0].employeeNo = " 000044 "; mine.overtime[0].status = "pending";
   assert.equal((await request("/api/data/snapshot.json", "POST", mine, leader)).status, 200);
   snapshot = (await request("/api/data/snapshot.json", "GET", undefined, admin)).data;
   assert.equal(snapshot.employees.find(e => e.id === 1).employeeNo, "000044");
   assert.equal(snapshot.employees.find(e => e.id === 2).name, "楼栋B测试");
   assert.equal(snapshot.overtime.find(r => r.id === 2).status, "pending");
-  assert.equal(snapshot.overtime.find(r => r.id === 1).status, "approved");
+  assert.equal(snapshot.overtime.find(r => r.id === 1).status, "pending");
   mine = (await request("/api/data/snapshot.json", "GET", undefined, leader)).data;
   mine.overtime.push({ id: 2, employeeId: 1, date: "2026-11-11", hours: 4, status: "approved" });
   assert.equal((await request("/api/data/snapshot.json", "POST", mine, leader)).status, 403);
@@ -209,7 +209,11 @@ test("范围合并不接受普通用户新增人员，调休审批不能透支�
   const leader = { role: "leader", employeeId: 1, buildings: ["楼栋A"] };
   const scope = scopedSnapshot(source, leader);
   scope.leaveRequests[0].status = "approved";
-  assert.throws(() => mergeSnapshot(source, scope, leader), /超过可用余额/);
+  assert.throws(() => mergeSnapshot(source, scope, leader), error => error.status === 403);
+  // Approval now uses its dedicated endpoint; legacy approved balances remain checked.
+  source.leaveRequests[0].status = "approved";
+  const invalidBalance = scopedSnapshot(source, { role: "admin" });
+  assert.throws(() => mergeSnapshot(source, invalidBalance, { role: "admin" }), /超过可用余额/);
 });
 
 test("工号为可选文本，各角色保存时保留前导零、校验80字限制且不改变内部关联ID", () => {

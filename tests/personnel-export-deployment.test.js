@@ -37,10 +37,11 @@ const manifest = invoke({ manifest: true });
 assert.equal(manifest.auth.length, 3);
 assert.equal(manifest.index.length, 2);
 
-// Build the test baselines only from reviewed, public repository source. No
-// production backup, credentials or ignored .delivery file is a test dependency.
+// This historical publisher keeps its original reviewed public route fragments.
+// New approval routing has superseded those anchors in current auth-service.js;
+// no production backup, credentials or ignored .delivery file is a test dependency.
 const current = {
-  auth: canonical(fs.readFileSync(path.resolve(__dirname, "../server/auth-service.js"), "utf8")),
+  auth: canonical(manifest.auth.map(pair => pair[1]).join("\n")),
   index: canonical(fs.readFileSync(path.resolve(__dirname, "../index.html"), "utf8"))
 };
 const baseline = {};

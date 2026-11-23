@@ -115,7 +115,7 @@ const App = {
     }
     this._renderSidebar();
     this._clock();
-    this.navigate(Auth.isAdmin() || Auth.isLeader() ? 'dashboard' : 'profile', { organizationLoaded: results[1] });
+    this.navigate(Auth.isAdmin() || Auth.isLeader() ? 'dashboard' : (Auth.isRegionalManager() ? 'attendance' : 'profile'), { organizationLoaded: results[1] });
     // 登录后更新界面
     Auth._updateUI();
     Store.setOperator(Auth.currentUser().name);
@@ -135,7 +135,7 @@ const App = {
 
   _monthlyReminder() {
     var u = Auth.currentUser();
-    if (!u || u.role === 'user') return;
+    if (!u || !Auth.isAdmin() && !Auth.isLeader()) return;
     var now = new Date();
     var ym = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
     var d = {};

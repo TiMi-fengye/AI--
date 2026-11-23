@@ -11,7 +11,7 @@ const { spawnSync } = require("node:child_process");
 const { createSmsVerification } = require("../server/sms-verification");
 
 const root = path.resolve(__dirname, "..");
-const publicServerFiles = ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js"];
+const publicServerFiles = ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js"];
 
 function temporary(t) {
   const directory = fs.mkdtempSync(path.join(root, ".sms-auth-isolated-"));
@@ -27,7 +27,7 @@ function temporary(t) {
 test("并发改密先完成后，排队中的旧密码加验证码登录不能重新建立会话", async t => {
   const directory = temporary(t);
   const copiedAuth = path.join(directory, "auth-service.js");
-  fs.copyFileSync(path.join(root, "server/auth-service.js"), copiedAuth);
+  for (const file of ["auth-service.js", "approval-workflow.js", "approval-notifications.js"]) fs.copyFileSync(path.join(root, "server", file), path.join(directory, file));
 
   // The public module captures promisify(scrypt) at import. Track only completion
   // promises (no password values) to deterministically exercise the old race.

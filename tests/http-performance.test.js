@@ -43,7 +43,7 @@ async function fixture(t) {
   fs.mkdirSync(data);
   // Copy only explicitly public code. Loading server.js in this isolated tree
   // cannot read the workspace's private config.json, auth users or data files.
-  for (const file of ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js"]) {
+  for (const file of ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js"]) {
     fs.copyFileSync(path.join(sourceRoot, "server", file), path.join(directory, "server", file));
   }
   const text = "/* 合成性能测试，不含真实人员 */\n" + "var syntheticValue = '示例字符串';\n".repeat(600);

@@ -3,6 +3,9 @@ const Leave = {
   _statusFilter: '',
   _saving: false,
   _guidanceKey: '',
+  _notificationSequence: 0,
+  _notificationEvents: [],
+  _notificationRetrying: false,
   _types: {leave:'请假',compensatory:'调休请假',shift:'替班请假',statutoryAnnual:'法定年假',welfareAnnual:'福利年假',paidSick:'带薪病假',annual:'年假（外包人员）',sick:'病假（外包人员）',personal:'事假',marriage:'婚假',maternity:'产假',other:'其他'},
   _escape(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); },
   _minuteValue(value) {
@@ -23,7 +26,8 @@ const Leave = {
     // Historical date-only requests have no recorded time to reconstruct.
     return String(value||'-').replace(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/,'$1 $2');
   },
-  _isManager() { return Auth.isAdmin() || Auth.isLeader(); },
+  _isRegionalManager() { return typeof Auth.isRegionalManager==='function' && Auth.isRegionalManager(); },
+  _isManager() { return Auth.isAdmin() || Auth.isLeader() || this._isRegionalManager(); },
   _employees() { return Store.getEmployees().filter(function(e) { return Auth.canAccessEmployee(e.id); }); },
   _records() {
     var ids=new Set(this._employees().map(function(e) { return Number(e.id); }));
@@ -31,10 +35,83 @@ const Leave = {
   },
   _canApply(id) {
     var u=Auth.currentUser();
-    return !!u && this._employees().some(function(e) { return Number(e.id)===Number(id); }) && (this._isManager() || Number(u.employeeId)===Number(id));
+    return !!u && this._canView(id) && (Auth.isAdmin() || Auth.isLeader() || Number(u.employeeId)===Number(id));
   },
-  _canManage(r) { return !!r && this._isManager() && this._canApply(r.employeeId) && Auth.canManageEmployee(r.employeeId); },
+  _canView(id) { return this._employees().some(function(e) { return Number(e.id)===Number(id); }); },
+  _canManage(r) { return !!r && (Auth.isAdmin() || Auth.isLeader()) && this._canApply(r.employeeId) && Auth.canManageEmployee(r.employeeId); },
   _canDelete(r) { return !!r && Auth.isAdmin() && this._canManage(r); },
+  _approvalStage(r) { return r.status==='pending' ? (r.approvalStage || 'leader') : 'complete'; },
+  _canApprove(r) {
+    if (!r || r.status!=='pending' || !this._canView(r.employeeId)) return false;
+    var stage=this._approvalStage(r), inScope=typeof Auth.canApproveEmployee==='function' ? Auth.canApproveEmployee(r.employeeId) : this._canManage(r);
+    return inScope && ((stage==='leader' && (Auth.isAdmin() || Auth.isLeader())) || (stage==='regional' && (Auth.isAdmin() || this._isRegionalManager())));
+  },
+  _statusLabel(r) {
+    if (r.status==='pending') return ({leader:'待楼长审批',regional:'待区域经理终审'})[this._approvalStage(r)] || '审批阶段待核对';
+    return r.status==='approved' ? (r.approvalStage==='complete'?'最终批准':'已批准') : r.status==='rejected'?'已拒绝':'-';
+  },
+  _canViewNotifications(r) {
+    var inScope=!!r && (typeof Auth.canApproveEmployee==='function' ? Auth.canApproveEmployee(r.employeeId) : this._canManage(r));
+    return inScope && this._isManager() && this._canView(r.employeeId) && r.status==='approved' && ['compensatory','shift'].includes(r.type);
+  },
+  _notificationLabel(notification) {
+    if (!notification) return '暂无短信通知记录';
+    if (notification.status==='sent') return '已提交短信平台，实际送达请核实';
+    if (notification.status==='pending') return '短信通知待处理';
+    if (notification.status==='uncertain') return '短信提交结果不确定，请管理员核实后处理，避免重复发送';
+    if (notification.status==='blocked') return ({sms_not_configured:'短信服务待配置，通知尚未发送',no_region_manager:'未分配区域经理，通知尚未发送',manager_phone_missing:'区域经理未填写通知手机号，通知尚未发送',manager_scope_changed:'区域经理授权范围已变化，通知尚未发送'})[notification.reason] || '短信通知发送受阻，请管理员核查';
+    return '短信通知状态待核对';
+  },
+  _notificationIdentity() {
+    var user=Auth.currentUser();
+    return JSON.stringify([Store._sessionEpoch,user&&user.username,user&&user.role,user&&user.employeeId,user&&user.buildings,user&&user.regions]);
+  },
+  async _notificationRequest(path,options) {
+    var identity=this._notificationIdentity();
+    var response=await fetch('/api/approvals/notifications'+path,Object.assign({credentials:'same-origin',cache:'no-store'},options||{}));
+    var result=await response.json();
+    if (identity!==this._notificationIdentity()) throw new Error('登录状态已变化，请重新登录后查看');
+    if (!response.ok || result.ok===false) throw new Error(result.message||'短信通知状态读取失败');
+    return result;
+  },
+  _renderNotifications(id,notifications) {
+    var self=this;
+    if (!notifications.length) return '<p>暂无短信通知记录；历史已批准申请不会自动补发短信。</p>';
+    return notifications.map(function(event,index) {
+      var retry=Auth.isAdmin() && event.status==='blocked' ? '<button class="btn btn-outline btn-sm" onclick="Leave.retryNotification('+Number(id)+','+index+')">重试通知</button>' : '';
+      return '<div style="margin-bottom:12px;"><p>'+self._escape(self._notificationLabel(event))+'</p>'+retry+'</div>';
+    }).join('');
+  },
+  async showNotifications(id) {
+    var record=Store.getLeaveRequests().find(function(row) { return Number(row.id)===Number(id); });
+    if (!this._canViewNotifications(record)) { this._deny(); return; }
+    var sequence=++this._notificationSequence, identity=this._notificationIdentity();
+    this._notificationEvents=[];
+    App.openModal('区域经理短信通知','<div id="leaveNotificationContent" role="status">正在读取通知状态…</div>','<button class="btn btn-outline" onclick="App.closeModal()">关闭</button>');
+    var content=document.getElementById('leaveNotificationContent');
+    if (!content) return;
+    try {
+      var result=await this._notificationRequest('?kind=leaveRequests&id='+encodeURIComponent(record.id));
+      if (sequence!==this._notificationSequence || identity!==this._notificationIdentity() || document.getElementById('leaveNotificationContent')!==content) return;
+      this._notificationEvents=Array.isArray(result.notifications)?result.notifications.filter(function(event) { return event && event.kind==='leaveRequests' && Number(event.recordId)===Number(id); }):[];
+      content.innerHTML=this._renderNotifications(id,this._notificationEvents);
+    } catch (error) {
+      if (sequence===this._notificationSequence && identity===this._notificationIdentity() && document.getElementById('leaveNotificationContent')===content) content.textContent=error.message||'短信通知状态读取失败';
+    }
+  },
+  async retryNotification(id,index) {
+    if (this._notificationRetrying) return;
+    var record=Store.getLeaveRequests().find(function(row) { return Number(row.id)===Number(id); }), event=this._notificationEvents[index];
+    if (!Auth.isAdmin() || !this._canViewNotifications(record) || !event || event.status!=='blocked' || Number(event.recordId)!==Number(id)) { this._deny(); return; }
+    if (!App.confirm('确认在修正短信配置或区域经理资料后重试此通知？')) return;
+    this._notificationRetrying=true;
+    var identity=this._notificationIdentity(), sequence=this._notificationSequence, content=document.getElementById('leaveNotificationContent');
+    try {
+      await this._notificationRequest('/'+encodeURIComponent(event.id)+'/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      if (identity===this._notificationIdentity() && sequence===this._notificationSequence && content && document.getElementById('leaveNotificationContent')===content) await this.showNotifications(id);
+    } catch (error) { if (identity===this._notificationIdentity()) App.toast(error.message||'通知重试失败，请核查状态','error'); }
+    finally { this._notificationRetrying=false; }
+  },
   _deny() { App.toast('无权操作该人员的请假记录','error'); },
   _refresh() {
     if (App.currentPage==='attendance') { Attendance._activeTab='leave'; App.navigate('attendance'); }
@@ -53,16 +130,16 @@ const Leave = {
   },
   _renderTable(records,employees) {
     var self=this, manager=this._isManager();
-    var filtered=records.filter(function(r) { return self._canApply(r.employeeId) && employees.some(function(e) { return Number(e.id)===Number(r.employeeId); }) && (!self._statusFilter||r.status===self._statusFilter); }).slice().sort(function(a,b) { return b.id-a.id; });
+    var filtered=records.filter(function(r) { return self._canView(r.employeeId) && employees.some(function(e) { return Number(e.id)===Number(r.employeeId); }) && (!self._statusFilter||r.status===self._statusFilter); }).slice().sort(function(a,b) { return b.id-a.id; });
     if (!filtered.length) return '<div class="empty-state"><div class="empty-icon">📋</div><p>暂无请假记录</p></div>';
-    var statuses={pending:'待审批',approved:'已批准',rejected:'已拒绝'};
     var types=this._types;
     var rows=filtered.map(function(r) {
       var e=employees.find(function(e) { return Number(e.id)===Number(r.employeeId); }), controls='';
-      if (self._canManage(r) && r.status==='pending') controls='<button class="btn btn-success btn-sm" onclick="Leave.approve('+Number(r.id)+')">批准</button> <button class="btn btn-danger btn-sm" onclick="Leave.reject('+Number(r.id)+')">拒绝</button>';
+      if (self._canApprove(r)) controls='<button class="btn btn-success btn-sm" onclick="Leave.approve('+Number(r.id)+')">'+(self._approvalStage(r)==='regional'?'终审批准':['compensatory','shift'].includes(r.type)?'批准并通知':['statutoryAnnual','welfareAnnual','paidSick'].includes(r.type)?'初审通过':'批准')+'</button> <button class="btn btn-danger btn-sm" onclick="Leave.reject('+Number(r.id)+')">拒绝</button>';
       if (self._canDelete(r)) controls+=(controls?' ':'')+'<button class="btn btn-danger btn-sm" onclick="Leave.delete('+Number(r.id)+')">删除</button>';
+      if (self._canViewNotifications(r)) controls+=(controls?' ':'')+'<button class="btn btn-outline btn-sm" onclick="Leave.showNotifications('+Number(r.id)+')">短信通知</button>';
       var duration=Store.isCompensatoryLeave(r)?(Number(r.hours)||0).toFixed(1)+'h':(Number(r.days)||0)+'天';
-      return '<tr><td>#'+self._escape(r.id)+'</td><td>'+self._escape(e.name)+'</td>'+(manager?'<td>'+self._escape(e.department||'-')+'</td>':'')+'<td>'+self._escape(types[r.type]||r.type)+'</td><td>'+self._escape(self._formatDateTime(r.startDate))+' ~ '+self._escape(self._formatDateTime(r.endDate))+'</td><td>'+duration+'</td><td>'+self._escape(r.reason||'-')+'</td><td>'+self._escape(statuses[r.status]||'-')+'</td>'+(manager?'<td>'+(controls||'-')+'</td>':'')+'</tr>';
+      return '<tr><td>#'+self._escape(r.id)+'</td><td>'+self._escape(e.name)+'</td>'+(manager?'<td>'+self._escape(e.department||'-')+'</td>':'')+'<td>'+self._escape(types[r.type]||r.type)+'</td><td>'+self._escape(self._formatDateTime(r.startDate))+' ~ '+self._escape(self._formatDateTime(r.endDate))+'</td><td>'+duration+'</td><td>'+self._escape(r.reason||'-')+'</td><td>'+self._escape(self._statusLabel(r))+'</td>'+(manager?'<td>'+(controls||'-')+'</td>':'')+'</tr>';
     }).join('');
     return '<div class="table-responsive"><table><thead><tr><th>编号</th><th>人员</th>'+(manager?'<th>部门</th>':'')+'<th>类型</th><th>起止时间</th><th>时长</th><th>原因</th><th>状态</th>'+(manager?'<th>操作</th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   },
@@ -146,10 +223,22 @@ const Leave = {
     finally { this._saving=false; }
   },
   async _setStatus(id,status) {
+    if (this._saving) return;
     var r=Store.getLeaveRequests().find(function(r) { return Number(r.id)===Number(id); });
-    if (!this._canManage(r)||r.status!=='pending') { this._deny(); return; }
+    if (!this._canApprove(r)||!['approved','rejected'].includes(status)) { this._deny(); return; }
     if (status==='approved' && Store.isCompensatoryLeave(r) && Number(r.hours)>Store.getTimeBalance(r.employeeId).remainingHours) { App.toast('调休时长不足，无法批准该申请','error'); return; }
-    await this._mutate(function() { Store.updateLeaveRequest(r.id,{status:status}); },status==='approved'?'已批准该请假申请':'已拒绝该请假申请');
+    this._saving=true;
+    try {
+      var result=await Store.submitApproval('leaveRequests',r.id,status);
+      var current=Store.getLeaveRequests().find(function(row) { return Number(row.id)===Number(id); });
+      if (!current) throw new Error('审批已提交，记录读取失败，请刷新核对');
+      var message=current.status==='pending' && current.approvalStage==='regional' ? '楼长初审通过，等待区域经理终审' : current.status==='approved'?'请假申请已最终批准':current.status==='rejected'?'请假申请已拒绝':null;
+      if (!message) throw new Error('审批结果待核对，请刷新后查看');
+      App.toast(message,'success');
+      if (result && result.notification) App.toast(this._notificationLabel(result.notification),result.notification.status==='sent'?'info':'warning');
+      this._refresh(); return true;
+    } catch (error) { if (!error.sessionChanged) App.toast(error.message||'审批失败，请刷新核对后重试','error'); return false; }
+    finally { this._saving=false; }
   },
   approve(id) { return this._setStatus(id,'approved'); },
   reject(id) { return this._setStatus(id,'rejected'); },

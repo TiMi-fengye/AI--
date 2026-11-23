@@ -35,6 +35,7 @@ function fixture(role = 'admin') {
   const context = vm.createContext({
     Auth: {
       isAdmin: () => state.role === 'admin', isLeader: () => state.role === 'leader',
+      isRegionalManager: () => state.role === 'region_manager',
       currentUser: () => ({role: state.role, employeeId: 1}),
       canAccessEmployee: access,
       canManageEmployee: id => state.role !== 'user' && access(id)
@@ -50,7 +51,14 @@ function fixture(role = 'admin') {
       updateAttendance: (...args) => state.mutations.push(['updateAttendance', ...args]),
       updateOvertime: (...args) => state.mutations.push(['updateOvertime', ...args]),
       updateLeaveRequest: (...args) => state.mutations.push(['updateLeaveRequest', ...args]),
-      flushServerSync: () => { state.flushes++; return state.flush(); }
+      flushServerSync: () => { state.flushes++; return state.flush(); },
+      submitApproval: async (kind, id, decision) => {
+        state.mutations.push(['submitApproval', kind, id, decision]);
+        const record = (kind === 'overtime' ? overtime : leaves).find(row => row.id === id);
+        const regional = decision === 'approved' && (kind === 'overtime' || ['statutoryAnnual', 'welfareAnnual', 'paidSick'].includes(record.type));
+        Object.assign(record, {status: regional ? 'pending' : decision, approvalStage: regional ? 'regional' : 'complete'});
+        return {ok: true, record};
+      }
     },
     App: {
       currentPage: 'attendance', today: () => '2026-11-18',
@@ -176,6 +184,6 @@ test('leaders retain own-building approvals, overtime editing and checkout while
   await f.Overtime.approve(22);
   await f.Leave.approve(31);
   await f.Attendance.saveCheckout();
-  assert.deepEqual(f.state.mutations.map(row => row[0]), ['updateOvertime', 'updateLeaveRequest', 'updateAttendance']);
+  assert.deepEqual(f.state.mutations.map(row => row[0]), ['submitApproval', 'submitApproval', 'updateAttendance']);
   assert.equal(f.state.confirmations.length, 0);
 });

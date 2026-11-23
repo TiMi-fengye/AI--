@@ -55,10 +55,18 @@ const Auth = {
   currentUser() { return this._user; },
   isAdmin() { return !!this._user && this._user.role === 'admin'; },
   isLeader() { return !!this._user && this._user.role === 'leader'; },
+  isRegionalManager() { return !!this._user && this._user.role === 'region_manager'; },
   leaderBuildings() { return this.isLeader() ? (this._user.buildings || []).slice() : []; },
+  regionalRegions() { return this.isRegionalManager() ? (this._user.regions || []).slice() : []; },
+  _regionalEmployee(id) {
+    if (!this.isRegionalManager()) return false;
+    const region = typeof Store.getEmployeeRegion === 'function' ? Store.getEmployeeRegion(id) : (Store.getEmployees().find(e => String(e.id) === String(id)) || {}).region;
+    return !!region && this.regionalRegions().includes(region);
+  },
   canAccessEmployee(id) {
     if (!this._user) return false;
     if (this.isAdmin()) return true;
+    if (this.isRegionalManager() && this._regionalEmployee(id)) return true;
     if (this.isLeader()) {
       if (typeof Store.getEmployeeBuilding === 'function') {
         const building = Store.getEmployeeBuilding(id);
@@ -69,14 +77,23 @@ const Auth = {
     }
     return this._user.employeeId != null && String(this._user.employeeId) === String(id);
   },
-  canManageEmployee(id) { return this.canAccessEmployee(id); },
+  canManageEmployee(id) {
+    if (this.isRegionalManager()) return this._user.employeeId != null && String(this._user.employeeId) === String(id);
+    return this.canAccessEmployee(id);
+  },
+  canApproveEmployee(id) {
+    if (this.isAdmin()) return true;
+    if (this.isLeader()) return this.canAccessEmployee(id);
+    return this._regionalEmployee(id);
+  },
   canAccessPage(page) {
     if (!this._user) return false;
     if (this.isAdmin()) return true;
     if (this.isLeader()) return ['dashboard', 'employees', 'attendance', 'leave', 'overtime', 'profile', 'hours', 'cost', 'performance'].includes(page);
+    if (this.isRegionalManager()) return ['profile', 'attendance', 'leave', 'overtime', 'hours'].includes(page);
     return ['profile', 'attendance', 'leave', 'overtime', 'hours'].includes(page);
   },
-  roleLabel(role) { return ({ admin: '管理员', leader: '楼长', user: '普通人员' })[role] || '普通人员'; },
+  roleLabel(role) { return ({ admin: '管理员', leader: '楼长', region_manager: '区域经理', user: '普通人员' })[role] || '普通人员'; },
   escape(value) {
     return String(value == null ? '' : value).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
   },

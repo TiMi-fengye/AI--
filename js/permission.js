@@ -11,14 +11,14 @@ const Permission = {
       const e = Auth.escape;
       container.innerHTML =
         '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;"><button class="btn btn-primary" id="permAdd">添加账号</button><button class="btn btn-outline" onclick="App.navigate(\'admin\')">返回设置</button></div>' +
-        '<div class="card"><div class="card-header"><h3>账号与人员权限</h3></div><div class="card-body"><div class="table-responsive"><table><thead><tr><th>姓名</th><th>登录账号</th><th>角色</th><th>关联人员</th><th>负责楼栋</th><th>操作</th></tr></thead><tbody>' +
+        '<div class="card"><div class="card-header"><h3>账号与人员权限</h3></div><div class="card-body"><div class="table-responsive"><table><thead><tr><th>姓名</th><th>登录账号</th><th>角色</th><th>关联人员</th><th>负责楼栋 / 区域</th><th>操作</th></tr></thead><tbody>' +
         Object.keys(users).map(username => {
           const user = users[username];
           const employee = employees.find(emp => String(emp.id) === String(user.employeeId));
-          return '<tr><td>' + e(user.name) + '</td><td>' + e(username) + '</td><td>' + Auth.roleLabel(user.role) + '</td><td>' + (employee ? e(employee.name) + '（' + e(employee.phone || '') + '）' : '未绑定') + '</td><td>' + e((user.buildings || []).join('、') || '—') + '</td><td><button class="btn btn-outline btn-sm" data-edit="' + e(username) + '">编辑权限</button> ' + (username !== 'admin' && username !== Auth.currentUser().username ? '<button class="btn btn-danger btn-sm" data-delete="' + e(username) + '">删除账号</button>' : '') + '</td></tr>';
+          return '<tr><td>' + e(user.name) + '</td><td>' + e(username) + '</td><td>' + Auth.roleLabel(user.role) + '</td><td>' + (employee ? e(employee.name) + '（' + e(employee.phone || '') + '）' : '未绑定') + '</td><td>' + e((user.role === 'region_manager' ? user.regions || [] : user.buildings || []).join('、') || '—') + '</td><td><button class="btn btn-outline btn-sm" data-edit="' + e(username) + '">编辑权限</button> ' + (username !== 'admin' && username !== Auth.currentUser().username ? '<button class="btn btn-danger btn-sm" data-delete="' + e(username) + '">删除账号</button>' : '') + '</td></tr>';
         }).join('') +
         '</tbody></table></div></div></div>' +
-        '<p style="margin-top:16px;color:var(--text-light);line-height:1.9;">管理员可查看全部信息。楼长只可查看和维护指定楼栋的信息。普通人员只可维护自己绑定的档案、提交自己的加班和请假申请、查看自己的小时数。手机号注册的账号自动绑定个人档案；楼长身份由管理员分配。设为楼长并分配楼栋后，看板自动同步姓名；更换人员时调整账号权限即可。</p>';
+        '<p style="margin-top:16px;color:var(--text-light);line-height:1.9;">管理员可查看全部信息。楼长只可查看和维护指定楼栋的信息。区域经理按人员档案中的区域接收审批和短信通知，无人员管理或删除权限；请分配区域并填写通知手机号。普通人员只可维护自己绑定的档案、提交自己的加班和请假申请、查看自己的小时数。手机号注册的账号自动绑定个人档案；楼长和区域经理身份由管理员分配。设为楼长并分配楼栋后，看板自动同步姓名；更换人员时调整账号权限即可。</p>';
       container.querySelector('#permAdd').onclick = () => this.showEditModal();
       container.querySelectorAll('[data-edit]').forEach(button => { button.onclick = () => this.showEditModal(button.dataset.edit); });
       container.querySelectorAll('[data-delete]').forEach(button => { button.onclick = () => this.deleteAccount(button.dataset.delete); });
@@ -31,18 +31,24 @@ const Permission = {
     const e = Auth.escape;
     const employees = Store.getEmployees();
     const buildings = [...new Set((typeof Store.getPersonnelOptions === 'function' ? Store.getPersonnelOptions('buildings') : employees.map(emp => emp.building).filter(Boolean)).concat(user.buildings || []))];
+    const regions = [...new Set((typeof Store.getPersonnelOptions === 'function' ? Store.getPersonnelOptions('regions') : employees.map(emp => emp.region).filter(Boolean)).concat(user.regions || []))];
     App.openModal(username ? '编辑账号权限' : '添加账号',
       '<div class="form-group"><label>手机号 / 管理账号 *</label><input class="form-control" id="permUsername" value="' + e(username || '') + '"' + (username ? ' readonly' : '') + ' autocomplete="off"></div>' +
       '<div class="form-group"><label>姓名 *</label><input class="form-control" id="permName" value="' + e(user.name || '') + '"></div>' +
-      '<div class="form-group"><label>密码' + (username ? '（留空保留）' : ' *') + '</label><input type="password" class="form-control" id="permPassword" autocomplete="new-password" placeholder="普通人员/楼长至少8位，管理员至少12位"' + (username === Auth.currentUser().username ? ' disabled' : '') + '>' + (username === Auth.currentUser().username ? '<p>修改本人密码请使用右上角“账号 → 修改密码”。</p>' : '') + '</div>' +
+      '<div class="form-group"><label>通知手机号（区域经理必填）</label><input type="tel" class="form-control" id="permPhone" maxlength="11" value="' + e(user.phone || (/^1[3-9]\d{9}$/.test(username || '') ? username : '')) + '"' + (user.phone ? ' readonly' : '') + '><p style="font-size:12px;color:var(--text-light);margin-top:6px;">用于审批短信通知，已有登录手机号保持原绑定。</p></div>' +
+      '<div class="form-group"><label>密码' + (username ? '（留空保留）' : ' *') + '</label><input type="password" class="form-control" id="permPassword" autocomplete="new-password" placeholder="普通人员/楼长/区域经理至少8位，管理员至少12位"' + (username === Auth.currentUser().username ? ' disabled' : '') + '>' + (username === Auth.currentUser().username ? '<p>修改本人密码请使用右上角“账号 → 修改密码”。</p>' : '') + '</div>' +
       '<div class="form-group"><label>关联人员档案</label><select class="form-control" id="permEmployee"><option value="">未绑定</option>' +
       employees.map(emp => '<option value="' + e(emp.id) + '"' + (String(emp.id) === String(user.employeeId) ? ' selected' : '') + '>' + e(emp.name + ' · ' + (emp.phone || '') + ' · ' + (emp.building || '楼栋未填写')) + '</option>').join('') + '</select></div>' +
       '<div class="form-group"><label>角色</label><select class="form-control" id="permRole">' +
-      ['user', 'leader', 'admin'].map(role => '<option value="' + role + '"' + (role === user.role ? ' selected' : '') + '>' + Auth.roleLabel(role) + '</option>').join('') + '</select></div>' +
-      '<div class="form-group" id="permBuildingsGroup"><label>负责楼栋（楼长必填，多个用逗号分隔）</label><input class="form-control" id="permBuildings" list="permBuildingOptions" value="' + e((user.buildings || []).join('，')) + '"><datalist id="permBuildingOptions">' + buildings.map(building => '<option value="' + e(building) + '"></option>').join('') + '</datalist><p style="font-size:12px;color:var(--text-light);margin-top:6px;">按此处明确分配的楼栋授权，人员表单中的岗位名称不会授予楼长权限。</p></div>',
+      ['user', 'leader', 'region_manager', 'admin'].map(role => '<option value="' + role + '"' + (role === user.role ? ' selected' : '') + '>' + Auth.roleLabel(role) + '</option>').join('') + '</select></div>' +
+      '<div class="form-group" id="permBuildingsGroup"><label>负责楼栋（楼长必填，多个用逗号分隔）</label><input class="form-control" id="permBuildings" list="permBuildingOptions" value="' + e((user.buildings || []).join('，')) + '"><datalist id="permBuildingOptions">' + buildings.map(building => '<option value="' + e(building) + '"></option>').join('') + '</datalist><p style="font-size:12px;color:var(--text-light);margin-top:6px;">按此处明确分配的楼栋授权，人员表单中的岗位名称不会授予楼长权限。</p></div>' +
+      '<div class="form-group" id="permRegionsGroup"><label>负责区域（区域经理必填，多个用逗号分隔）</label><input class="form-control" id="permRegions" list="permRegionOptions" value="' + e((user.regions || []).join('，')) + '"><datalist id="permRegionOptions">' + regions.map(region => '<option value="' + e(region) + '"></option>').join('') + '</datalist><p style="font-size:12px;color:var(--text-light);margin-top:6px;">须与人员档案的“区域”一致；未填区域的申请请先由管理员补齐人员区域。</p></div>',
       '<button class="btn btn-primary" id="permSave">保存</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>');
     const roleSelect = document.getElementById('permRole');
-    const toggle = () => { document.getElementById('permBuildingsGroup').hidden = roleSelect.value !== 'leader'; };
+    const toggle = () => {
+      document.getElementById('permBuildingsGroup').hidden = roleSelect.value !== 'leader';
+      document.getElementById('permRegionsGroup').hidden = roleSelect.value !== 'region_manager';
+    };
     roleSelect.onchange = toggle; toggle();
     document.getElementById('permSave').onclick = () => this.saveAccount(!!username);
   },
@@ -55,13 +61,19 @@ const Permission = {
     const role = document.getElementById('permRole').value;
     const employeeId = Number(document.getElementById('permEmployee').value) || null;
     const buildings = role === 'leader' ? [...new Set(document.getElementById('permBuildings').value.split(/[,，、;\n]/).map(item => item.trim()).filter(Boolean))] : [];
+    const regions = role === 'region_manager' ? [...new Set(document.getElementById('permRegions').value.split(/[,，、;\n]/).map(item => item.trim()).filter(Boolean))] : [];
+    const phoneInput = document.getElementById('permPhone');
+    const phone = phoneInput && phoneInput.value.trim() || (/^1[3-9]\d{9}$/.test(username) ? username : '');
     if (!username || !name) return App.toast('请填写账号和姓名', 'error');
     const minimum = role === 'admin' ? 12 : 8;
     if ((!isEdit || password) && password.length < minimum) return App.toast('密码至少' + minimum + '位', 'error');
     if (role === 'leader' && !buildings.length) return App.toast('请填写楼长负责的楼栋', 'error');
-    const body = { username, name, role, employeeId, buildings };
+    if (role === 'region_manager' && !regions.length) return App.toast('请填写区域经理负责的区域', 'error');
+    if (phone && !/^1[3-9]\d{9}$/.test(phone) || role === 'region_manager' && !phone) return App.toast('请填写有效的通知手机号', 'error');
+    if (/^1[3-9]\d{9}$/.test(username) && phone !== username) return App.toast('手机号登录账号须与通知手机号一致', 'error');
+    const body = { username, name, role, employeeId, buildings, regions };
     if (password) body.password = password;
-    if (/^1[3-9]\d{9}$/.test(username)) body.phone = username;
+    if (phone) body.phone = phone;
     const button = document.getElementById('permSave'); button.disabled = true;
     try {
       await Store.flushServerSync();

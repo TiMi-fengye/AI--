@@ -22,6 +22,14 @@
     "model": "deepseek-chat",
     "apiKey": ""
   },
+  "approvalSms": {
+    "enabled": false,
+    "accessKeyId": "",
+    "accessKeySecret": "",
+    "securityToken": "",
+    "signName": "",
+    "templateCode": ""
+  },
   "sms": {
     "enabled": false,
     "accessKeyId": "",

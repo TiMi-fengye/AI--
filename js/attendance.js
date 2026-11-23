@@ -8,6 +8,11 @@ const Attendance = {
   _getMyEmployeeId() { var u=Auth.currentUser(); return u && u.employeeId ? Number(u.employeeId) : null; },
   _isRegular() { return !Auth.isAdmin() && !Auth.isLeader(); },
   _isManagerUser() { return Auth.isAdmin() || Auth.isLeader(); },
+  _isRegionalManager() { return typeof Auth.isRegionalManager === 'function' && Auth.isRegionalManager(); },
+  _tabs() {
+    if (this._isRegionalManager()) return [['overtime','加班审批'],['leave','请假审批']].concat(this._getMyEmployeeId() ? [['hours','我的小时数']] : []);
+    return this._isRegular() ? [['hours','我的小时数'],['overtime','加班申请'],['leave','请假申请']] : [['attendance','考勤'],['overtime','加班申请'],['leave','请假申请']];
+  },
   _employees() { return Store.getEmployees().filter(function(e) { return Auth.canAccessEmployee(e.id); }); },
   _records() {
     var ids=new Set(this._employees().map(function(e) { return Number(e.id); }));
@@ -19,15 +24,15 @@ const Attendance = {
   render(container) {
     if (!Auth.currentUser()) { container.innerHTML=''; return; }
     var regular=this._isRegular();
-    var tabs=regular ? [['hours','我的小时数'],['overtime','加班申请'],['leave','请假申请']] : [['attendance','考勤'],['overtime','加班申请'],['leave','请假申请']];
+    var tabs=this._tabs();
     if (!tabs.some(function(tab) { return tab[0]===Attendance._activeTab; })) this._activeTab=tabs[0][0];
-    container.innerHTML=(regular?'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;"><button class="btn btn-primary" onclick="Attendance.otShowAddModal()">+ 加班申请</button><button class="btn btn-outline" onclick="Attendance.lvShowApplyModal()">+ 请假申请</button></div>':'')+
+    container.innerHTML=(regular && (!this._isRegionalManager() || this._getMyEmployeeId())?'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px;"><button class="btn btn-primary" onclick="Attendance.otShowAddModal()">+ 加班申请</button><button class="btn btn-outline" onclick="Attendance.lvShowApplyModal()">+ 请假申请</button></div>':'')+
       '<div role="tablist" aria-label="考勤管理" style="display:flex;flex-wrap:wrap;gap:8px;border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:20px;">'+
       tabs.map(function(tab) { return '<button type="button" role="tab" aria-selected="'+(tab[0]===Attendance._activeTab)+'" class="btn '+(tab[0]===Attendance._activeTab?'btn-primary':'btn-outline')+'" onclick="Attendance._switchTo(\''+tab[0]+'\')">'+tab[1]+'</button>'; }).join('')+'</div><div id="attSubContent"></div>';
     this._renderActiveTab();
   },
   _switchTo(tab) {
-    var allowed=this._isRegular()?['hours','overtime','leave']:['attendance','overtime','leave'];
+    var allowed=this._tabs().map(function(item) { return item[0]; });
     if (!allowed.includes(tab)) { this._deny(); return; }
     this._activeTab=tab;
     var container=document.getElementById('pageContent');

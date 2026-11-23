@@ -14,6 +14,7 @@ try {
   CONFIG = JSON.parse(fs.readFileSync(path.join(__dirname, "config.json"), "utf-8"));
   if (!CONFIG || typeof CONFIG !== "object" || Array.isArray(CONFIG)) throw new Error("Invalid server configuration");
   if (CONFIG.sms !== undefined && (!CONFIG.sms || typeof CONFIG.sms !== "object" || Array.isArray(CONFIG.sms) || (CONFIG.sms.enabled !== undefined && typeof CONFIG.sms.enabled !== "boolean"))) throw new Error("Invalid SMS configuration");
+  if (CONFIG.approvalSms !== undefined && (!CONFIG.approvalSms || typeof CONFIG.approvalSms !== "object" || Array.isArray(CONFIG.approvalSms) || (CONFIG.approvalSms.enabled !== undefined && typeof CONFIG.approvalSms.enabled !== "boolean"))) throw new Error("Invalid approval SMS configuration");
 } catch (error) {
   if (error.code !== "ENOENT") throw new Error("服务端配置无法读取，请检查配置文件及权限");
 }
@@ -217,6 +218,18 @@ function smsSettings() {
     templateParamKey: process.env.HR_SMS_TEMPLATE_PARAM_KEY || config.templateParamKey || "code"
   };
 }
+function approvalSmsSettings() {
+  const config = CONFIG.approvalSms || {};
+  if (process.env.HR_APPROVAL_SMS_ENABLED !== undefined && !/^(?:true|false)$/i.test(process.env.HR_APPROVAL_SMS_ENABLED)) throw new Error("审批短信开关配置无效，请使用 true 或 false");
+  return {
+    enabled: String(process.env.HR_APPROVAL_SMS_ENABLED || (config.enabled ? "true" : "false")).toLowerCase() === "true",
+    accessKeyId: process.env.HR_APPROVAL_SMS_ACCESS_KEY_ID || config.accessKeyId || "",
+    accessKeySecret: process.env.HR_APPROVAL_SMS_ACCESS_KEY_SECRET || config.accessKeySecret || "",
+    securityToken: process.env.HR_APPROVAL_SMS_SECURITY_TOKEN || config.securityToken || "",
+    signName: process.env.HR_APPROVAL_SMS_SIGN_NAME || config.signName || "",
+    templateCode: process.env.HR_APPROVAL_SMS_TEMPLATE_CODE || config.templateCode || ""
+  };
+}
 const smsConfig = smsSettings();
 const smsVerification = createSmsVerification({
   dataDir: DATA_DIR, enabled: smsConfig.enabled,
@@ -224,6 +237,7 @@ const smsVerification = createSmsVerification({
 });
 const auth = createAuthService({
   dataDir: DATA_DIR,
+  approvalSms: approvalSmsSettings(),
   smsVerification,
   readSnapshot: async () => {
     if (MYSQL_POOL) return readMySQLSnapshot();

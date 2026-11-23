@@ -6,6 +6,7 @@ const Store = {
   _serverSyncReady: false,
   _serverHydrating: false,
   _syncPromise: null,
+  _approvalPromise: null,
   _writeVersion: 0,
   _syncedVersion: 0,
   _sessionEpoch: 0,
@@ -54,7 +55,7 @@ const Store = {
   },
   _organizationIdentity() {
     const user = typeof Auth !== 'undefined' && Auth.currentUser ? Auth.currentUser() : null;
-    return user ? JSON.stringify([user.username, user.role, user.employeeId, user.buildings || []]) : '';
+    return user ? JSON.stringify([user.username, user.role, user.employeeId, user.buildings || [], user.regions || []]) : '';
   },
   getOrganizationSettings() {
     const result = this._organizationSettings ? this._cloneJsonValue(this._organizationSettings) : { schemaVersion: 1, options: {}, buildingLeaders: [] };
@@ -171,6 +172,48 @@ const Store = {
 
   syncSnapshotToServer() { this._writeVersion++; return this.flushServerSync(); },
 
+  async submitApproval(kind, id, decision) {
+    if (!['overtime', 'leaveRequests'].includes(kind) || !Number.isSafeInteger(Number(id)) || Number(id) <= 0 || !['approved', 'rejected'].includes(decision)) throw new Error('审批参数无效');
+    if (this._approvalPromise) throw new Error('另一项审批正在处理，请稍后');
+    const epoch = this._sessionEpoch, identity = this._organizationIdentity();
+    const current = () => epoch === this._sessionEpoch && identity === this._organizationIdentity();
+    const sessionError = () => Object.assign(new Error('登录状态已变化，请重新登录后重试'), {sessionChanged: true});
+    const pending = (async () => {
+      await this.flushServerSync();
+      if (!current()) throw sessionError();
+      let response, payload;
+      try {
+        response = await fetch('/api/approvals/' + kind + '/' + Number(id), {
+          method: 'POST', credentials: 'same-origin', cache: 'no-store',
+          headers: {'Content-Type': 'application/json'}, body: JSON.stringify({decision, expectedRevision: this._revision})
+        });
+        payload = await response.json();
+      } catch (error) {
+        if (!current()) throw sessionError();
+        try { await this.restoreFromServer(); } catch (_) {}
+        if (!current()) throw sessionError();
+        throw Object.assign(new Error('审批结果尚未确认，请刷新核对后再操作'), {approvalMayBeCommitted: true});
+      }
+      if (!current()) throw sessionError();
+      if (!response.ok || payload.ok === false) {
+        try { await this.restoreFromServer(); } catch (_) {}
+        if (!current()) throw sessionError();
+        throw Object.assign(new Error(payload.message || '审批失败，请刷新后重试'), {status: response.status});
+      }
+      try {
+        if (await this.restoreFromServer() !== true) throw new Error('数据刷新未完成');
+      } catch (error) {
+        if (!current()) throw sessionError();
+        throw Object.assign(new Error('审批已提交，最新数据加载失败，请刷新核对，不要重复提交'), {approvalMayBeCommitted: true});
+      }
+      if (!current()) throw sessionError();
+      return payload;
+    })();
+    this._approvalPromise = pending;
+    try { return await pending; }
+    finally { if (this._approvalPromise === pending) this._approvalPromise = null; }
+  },
+
   async flushServerSync() {
     if (!this._serverSyncReady) throw new Error('数据尚未加载完成，请稍后重试');
     if (this._serverSyncTimer) { clearTimeout(this._serverSyncTimer); this._serverSyncTimer = null; }
@@ -237,6 +280,7 @@ const Store = {
     this._snapshotLoadSequence++;
     this._serverSyncReady = false;
     this._syncPromise = null;
+    this._approvalPromise = null;
     if (this._serverSyncTimer) clearTimeout(this._serverSyncTimer);
     this._serverSyncTimer = null;
     this._writeVersion = this._syncedVersion = 0;
@@ -267,6 +311,12 @@ const Store = {
     const employees = this._memoryOnly ? this._data.employees || [] : this.getEmployees();
     const employee = employees.find(item => String(item.id) === String(id));
     return employee && typeof employee.building === 'string' ? employee.building : null;
+  },
+
+  getEmployeeRegion(id) {
+    const employees = this._memoryOnly ? this._data.employees || [] : this.getEmployees();
+    const employee = employees.find(item => String(item.id) === String(id));
+    return employee && typeof employee.region === 'string' ? employee.region : null;
   },
 
   _nextId(rows) { return rows.reduce(function(id, row) { return Math.max(id, Number(row.id || 0) + 1); }, Date.now()); },

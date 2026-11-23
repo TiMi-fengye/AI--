@@ -3,7 +3,8 @@ const Overtime = {
   _dateFilter: '',
   _saving: false,
   _escape(v) { return String(v == null ? '' : v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); },
-  _isManager() { return Auth.isAdmin() || Auth.isLeader(); },
+  _isRegionalManager() { return typeof Auth.isRegionalManager==='function' && Auth.isRegionalManager(); },
+  _isManager() { return Auth.isAdmin() || Auth.isLeader() || this._isRegionalManager(); },
   _employees() { return Store.getEmployees().filter(function(e) { return Auth.canAccessEmployee(e.id); }); },
   _records() {
     var ids = new Set(this._employees().map(function(e) { return Number(e.id); }));
@@ -11,10 +12,22 @@ const Overtime = {
   },
   _canApply(id) {
     var u = Auth.currentUser();
-    return !!u && this._employees().some(function(e) { return Number(e.id) === Number(id); }) && (this._isManager() || Number(u.employeeId) === Number(id));
+    return !!u && this._canView(id) && (Auth.isAdmin() || Auth.isLeader() || Number(u.employeeId) === Number(id));
   },
-  _canManage(r) { return !!r && this._isManager() && this._canApply(r.employeeId) && Auth.canManageEmployee(r.employeeId); },
+  _canView(id) { return this._employees().some(function(e) { return Number(e.id)===Number(id); }); },
+  _canManage(r) { return !!r && (Auth.isAdmin() || Auth.isLeader()) && this._canApply(r.employeeId) && Auth.canManageEmployee(r.employeeId); },
   _canDelete(r) { return !!r && Auth.isAdmin() && this._canManage(r); },
+  _approvalStage(r) { return r.status==='pending' ? (r.approvalStage || 'leader') : 'complete'; },
+  _canApprove(r) {
+    if (!r || r.status!=='pending' || !this._canView(r.employeeId)) return false;
+    var stage=this._approvalStage(r), inScope=typeof Auth.canApproveEmployee==='function' ? Auth.canApproveEmployee(r.employeeId) : this._canManage(r);
+    return inScope && ((stage==='leader' && (Auth.isAdmin() || Auth.isLeader())) || (stage==='regional' && (Auth.isAdmin() || this._isRegionalManager())));
+  },
+  _canEdit(r) { return this._canManage(r) && r.status==='pending' && this._approvalStage(r)==='leader'; },
+  _statusLabel(r) {
+    if (r.status==='pending') return ({leader:'待楼长审批',regional:'待区域经理终审'})[this._approvalStage(r)] || '审批阶段待核对';
+    return r.status==='approved' ? (r.approvalStage==='complete'?'最终批准':'已批准') : r.status==='rejected'?'已拒绝':'-';
+  },
   _deny() { App.toast('无权操作该人员的加班记录','error'); },
   _refresh() {
     if (App.currentPage === 'attendance') { Attendance._activeTab = 'overtime'; App.navigate('attendance'); }
@@ -33,17 +46,14 @@ const Overtime = {
   },
   _renderTable(records,employees) {
     var self=this, manager=this._isManager();
-    var filtered=records.filter(function(r) { return self._canApply(r.employeeId) && employees.some(function(e) { return Number(e.id)===Number(r.employeeId); }) && (!self._dateFilter || r.date===self._dateFilter); }).slice().sort(function(a,b) { return b.id-a.id; });
+    var filtered=records.filter(function(r) { return self._canView(r.employeeId) && employees.some(function(e) { return Number(e.id)===Number(r.employeeId); }) && (!self._dateFilter || r.date===self._dateFilter); }).slice().sort(function(a,b) { return b.id-a.id; });
     if (!filtered.length) return '<div class="empty-state"><div class="empty-icon">⏰</div><p>暂无加班记录</p></div>';
-    var statuses={pending:'待审批',approved:'已批准',rejected:'已拒绝'};
     var rows=filtered.map(function(r) {
       var e=employees.find(function(e) { return Number(e.id)===Number(r.employeeId); }), controls='';
-      if (self._canManage(r)) {
-        if (r.status==='pending') controls+='<button class="btn btn-success btn-sm" onclick="Overtime.approve('+Number(r.id)+')">批准</button> <button class="btn btn-danger btn-sm" onclick="Overtime.reject('+Number(r.id)+')">拒绝</button> ';
-        controls+='<button class="btn btn-outline btn-sm" onclick="Overtime.showEditModal('+Number(r.id)+')">编辑</button>';
-      }
+      if (self._canApprove(r)) controls+='<button class="btn btn-success btn-sm" onclick="Overtime.approve('+Number(r.id)+')">'+(self._approvalStage(r)==='regional'?'终审批准':'初审通过')+'</button> <button class="btn btn-danger btn-sm" onclick="Overtime.reject('+Number(r.id)+')">拒绝</button> ';
+      if (self._canEdit(r)) controls+='<button class="btn btn-outline btn-sm" onclick="Overtime.showEditModal('+Number(r.id)+')">编辑</button>';
       if (self._canDelete(r)) controls+=' <button class="btn btn-danger btn-sm" onclick="Overtime.deleteRecord('+Number(r.id)+')">删除</button>';
-      return '<tr><td>'+self._escape(r.date)+'</td><td>'+self._escape(e.name)+'</td>'+(manager?'<td>'+self._escape(e.department||'-')+'</td>':'')+'<td>'+(r.overtimeType==='compensatory'?'调休加班':'费用加班')+'</td><td>'+(Number(r.hours)||0).toFixed(1)+'h</td><td>'+self._escape(r.reason||'-')+'</td><td>'+self._escape(statuses[r.status]||'-')+'</td>'+(manager?'<td>'+controls+'</td>':'')+'</tr>';
+      return '<tr><td>'+self._escape(r.date)+'</td><td>'+self._escape(e.name)+'</td>'+(manager?'<td>'+self._escape(e.department||'-')+'</td>':'')+'<td>'+(r.overtimeType==='compensatory'?'调休加班':'费用加班')+'</td><td>'+(Number(r.hours)||0).toFixed(1)+'h</td><td>'+self._escape(r.reason||'-')+'</td><td>'+self._escape(self._statusLabel(r))+'</td>'+(manager?'<td>'+(controls||'-')+'</td>':'')+'</tr>';
     }).join('');
     return '<div class="table-responsive"><table><thead><tr><th>日期</th><th>人员</th>'+(manager?'<th>部门</th>':'')+'<th>加班类型</th><th>时长</th><th>原因</th><th>状态</th>'+(manager?'<th>操作</th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div>';
   },
@@ -73,7 +83,7 @@ const Overtime = {
   },
   showEditModal(id) {
     var r=Store.getOvertime().find(function(r) { return Number(r.id)===Number(id); });
-    if (!this._canManage(r)) { this._deny(); return; }
+    if (!this._canEdit(r)) { this._deny(); return; }
     App.openModal('编辑加班记录','<div class="form-group"><label for="otEditType">加班类型</label><select class="form-control" id="otEditType"><option value="fee"'+(r.overtimeType!=='compensatory'?' selected':'')+'>费用加班</option><option value="compensatory"'+(r.overtimeType==='compensatory'?' selected':'')+'>调休加班</option></select></div>'+
       '<div class="form-group"><label for="otEditDate">日期</label><input type="date" class="form-control" id="otEditDate" value="'+this._escape(r.date)+'"></div>'+
       '<div class="form-group"><label for="otEditHours">小时数</label><input type="number" class="form-control" id="otEditHours" min="0.5" max="24" step="0.5" value="'+Number(r.hours)+'"></div>'+
@@ -82,7 +92,7 @@ const Overtime = {
   },
   async saveEdit() {
     var id=Number(document.getElementById('otEditId').value), r=Store.getOvertime().find(function(r) { return Number(r.id)===id; });
-    if (!this._canManage(r)) { this._deny(); return; }
+    if (!this._canEdit(r)) { this._deny(); return; }
     var date=document.getElementById('otEditDate').value, hours=Number(document.getElementById('otEditHours').value), type=document.getElementById('otEditType').value;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isFinite(hours) || hours<=0 || hours>24 || !['fee','compensatory'].includes(type)) { App.toast('请填写有效日期和小时数','error'); return; }
     var reason=document.getElementById('otEditReason').value.trim();
@@ -96,9 +106,19 @@ const Overtime = {
     finally { this._saving=false; }
   },
   async _setStatus(id,status) {
+    if (this._saving) return;
     var r=Store.getOvertime().find(function(r) { return Number(r.id)===Number(id); });
-    if (!this._canManage(r) || r.status!=='pending') { this._deny(); return; }
-    await this._mutate(function() { Store.updateOvertime(r.id,{status:status}); },status==='approved'?'已批准':'已拒绝');
+    if (!this._canApprove(r) || !['approved','rejected'].includes(status)) { this._deny(); return; }
+    this._saving=true;
+    try {
+      await Store.submitApproval('overtime',r.id,status);
+      var current=Store.getOvertime().find(function(row) { return Number(row.id)===Number(id); });
+      if (!current) throw new Error('审批已提交，记录读取失败，请刷新核对');
+      var message=current.status==='pending' && current.approvalStage==='regional' ? '楼长初审通过，等待区域经理终审' : current.status==='approved'?'加班申请已最终批准':current.status==='rejected'?'加班申请已拒绝':null;
+      if (!message) throw new Error('审批结果待核对，请刷新后查看');
+      App.toast(message,'success'); this._refresh(); return true;
+    } catch (error) { if (!error.sessionChanged) App.toast(error.message||'审批失败，请刷新核对后重试','error'); return false; }
+    finally { this._saving=false; }
   },
   approve(id) { return this._setStatus(id,'approved'); },
   reject(id) { return this._setStatus(id,'rejected'); },

@@ -7,6 +7,8 @@ const zlib = require("node:zlib");
 const { isIP } = require("node:net");
 const { promisify } = require("node:util");
 const { isDeepStrictEqual } = require("node:util");
+const approvalWorkflow = require("./approval-workflow");
+const { createApprovalSmsSender, deliverEvent } = require("./approval-notifications");
 const scrypt = promisify(crypto.scrypt);
 const COOKIE = "hr_session";
 const SESSION_MS = 12 * 60 * 60 * 1000;
@@ -36,20 +38,22 @@ function normalizeSnapshot(value) {
   return snapshot;
 }
 function publicUser(username, user) {
-  return { username, name: user.name || username, role: user.role, employeeId: user.employeeId || null, phone: user.phone || "", buildings: user.role === "leader" && Array.isArray(user.buildings) ? user.buildings.slice() : [] };
+  return { username, name: user.name || username, role: user.role, employeeId: user.employeeId || null, phone: user.phone || "", buildings: user.role === "leader" && Array.isArray(user.buildings) ? user.buildings.slice() : [], regions: user.role === "region_manager" && Array.isArray(user.regions) ? user.regions.slice() : [] };
 }
 function visibleEmployees(snapshot, user) {
   if (user.role === "admin") return snapshot.employees;
   if (user.role === "leader") return snapshot.employees.filter(e => user.buildings.includes(e.building) && !!e.building);
+  if (user.role === "region_manager") return snapshot.employees.filter(e => e.id === user.employeeId || (e.region && (user.regions || []).includes(e.region)));
   return snapshot.employees.filter(e => e.id === user.employeeId);
 }
 function scopedSnapshot(input, user) {
   const snapshot = normalizeSnapshot(input);
-  if (user.role === "admin") return clone(snapshot);
+  if (user.role === "admin") { const result = clone(snapshot); delete result.approvalOutbox; return result; }
   const employees = visibleEmployees(snapshot, user);
   const ids = new Set(employees.map(e => e.id));
   const result = emptySnapshot();
   result.employees = clone(employees);
+  if (user.role === "region_manager") result.employees = result.employees.map(employee => employee.id === user.employeeId ? employee : Object.fromEntries(["id", "name", "department", "building", "region", "position"].filter(key => employee[key] !== undefined).map(key => [key, employee[key]])));
   result.overtime = clone(snapshot.overtime.filter(r => ids.has(r.employeeId)));
   result.leaveRequests = clone(snapshot.leaveRequests.filter(r => ids.has(r.employeeId)));
   result.revision = snapshot.revision;
@@ -134,6 +138,21 @@ function mergeSnapshot(input, incoming, user) {
   const current = normalizeSnapshot(input);
   if (!incoming || !Array.isArray(incoming.employees)) fail(400, "快照格式无效");
   if (incoming.revision !== undefined && incoming.revision !== current.revision) fail(409, "数据已更新，请刷新后重试");
+  incoming = approvalWorkflow.protectSnapshot(current, incoming);
+  if (user.role === "region_manager") {
+    const visible = scopedSnapshot(current, user);
+    const sameRecords = (first, second, key) => first.length === second.length && first.every(record => second.some(old => old.id === record.id && isDeepStrictEqual(requestBusinessData(record, key), requestBusinessData(old, key))));
+    const foreignEmployees = visible.employees.filter(employee => employee.id !== user.employeeId);
+    const supplied = incoming.employees.filter(employee => employee.id !== user.employeeId);
+    if (supplied.length !== foreignEmployees.length || supplied.some(employee => !foreignEmployees.some(old => old.id === employee.id && isDeepStrictEqual(employee, old)))) fail(403, "区域经理只能维护本人资料，不能维护区域人员");
+    for (const key of ["overtime", "leaveRequests"]) {
+      if (Array.isArray(incoming[key]) && !sameRecords(incoming[key].filter(record => record.employeeId !== user.employeeId), visible[key].filter(record => record.employeeId !== user.employeeId), key)) fail(403, "区域经理只能通过审批操作处理区域申请");
+    }
+    if ((incoming.attendance || []).length || (incoming.performance || []).length) fail(403, "区域经理无权维护考勤或绩效");
+    const own = { ...incoming, employees: incoming.employees.filter(employee => employee.id === user.employeeId), attendance: [], performance: [] };
+    for (const key of ["overtime", "leaveRequests"]) if (Array.isArray(own[key])) own[key] = own[key].filter(record => record.employeeId === user.employeeId);
+    return mergeSnapshot(current, own, { ...user, role: "user" });
+  }
   if (user.role === "admin") {
     const next = normalizeSnapshot(incoming);
     validateRows(next.employees, "人员");
@@ -194,7 +213,7 @@ function mergeSnapshot(input, incoming, user) {
         if (record.employeeId !== user.employeeId || record.status !== "pending") fail(403, "只能为自己提交待审批申请");
         validateRequest(record, key);
       }
-      next[key] = oldRows.concat(additions.map(record => ({ ...requestBusinessData(record, key), status: "pending", createdAt: new Date().toISOString() })));
+      next[key] = oldRows.concat(additions.map(record => ({ ...requestBusinessData(record, key), status: "pending", approvalStage: "leader", approvalHistory: [], createdAt: new Date().toISOString() })));
     } else {
       for (const row of rows) {
         const old = oldRows.find(r => r.id === row.id);
@@ -366,7 +385,7 @@ function organizationSettings(value) {
   }
   return result;
 }
-function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerification = null }) {
+function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerification = null, approvalSms = {}, approvalSmsSender = null }) {
   const userFile = path.join(dataDir, "auth-users.json");
   const organizationFile = path.join(dataDir, "organization-settings.json");
   let users = Object.create(null);
@@ -374,6 +393,39 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
   catch (error) { if (error.code !== "ENOENT") throw new Error("账号文件无法读取，请检查备份和文件权限"); }
   const sessions = new Map(), attempts = new Map();
   const sms = smsVerification || { required: false, configured: false };
+  const approvalSender = approvalSmsSender || createApprovalSmsSender(approvalSms);
+  let notificationsRunning = false;
+  function scheduleNotifications() {
+    if (notificationsRunning) return;
+    notificationsRunning = true;
+    setImmediate(async () => {
+      let completed = false;
+      try {
+        const snapshot = await serialized(() => readSnapshot());
+        for (const source of snapshot.approvalOutbox || []) {
+          if (source.status !== "pending" && !(source.status === "blocked" && approvalSender)) continue;
+          const event = clone(source);
+          await deliverEvent(event, users, approvalSender, async () => serialized(async () => {
+            const latest = normalizeSnapshot(await readSnapshot());
+            if (!(latest.approvalOutbox || []).some(row => row.id === event.id)) throw new Error("Notification queue record was removed");
+            latest.approvalOutbox = latest.approvalOutbox.map(row => row.id === event.id ? clone(event) : row);
+            latest.revision++;
+            await writeSnapshot(latest);
+          }));
+        }
+        completed = true;
+      } catch (_) { /* Pending entries remain durable for explicit retry/restart. */ }
+      finally {
+        notificationsRunning = false;
+        if (completed) {
+          try {
+            const latest = await serialized(() => readSnapshot());
+            if ((latest.approvalOutbox || []).some(event => event.status === "pending")) scheduleNotifications();
+          } catch (_) { /* No notification is removed on storage errors. */ }
+        }
+      }
+    });
+  }
   let queue = Promise.resolve();
   function serialized(action) { const task = queue.then(action); queue = task.catch(() => {}); return task; }
   function saveUsers() { writeAtomic(userFile, users); }
@@ -464,10 +516,58 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     return { schemaVersion: 1, revision: configured.revision, options, buildingLeaders: clone(buildingLeaders) };
   }
   async function handle(req, res, url) {
-    if (!(url.startsWith("/api/auth/") || url === "/api/data/snapshot.json" || url === "/api/organization/options" || url === "/api/organization/settings" || url === "/api/employees/export")) return false;
+    if (!(url.startsWith("/api/auth/") || url.startsWith("/api/approvals/") || url === "/api/data/snapshot.json" || url === "/api/organization/options" || url === "/api/organization/settings" || url === "/api/employees/export")) return false;
     try {
       checkOrigin(req);
-      if (url === "/api/employees/export" && req.method === "GET") {
+      if (url.startsWith("/api/approvals/")) requireUser(req);
+      const approvalMatch = /^\/api\/approvals\/(overtime|leaveRequests)\/([1-9][0-9]*)$/.exec(url);
+      const retryMatch = /^\/api\/approvals\/notifications\/([a-f0-9-]{36})\/retry$/.exec(url);
+      if (approvalMatch && req.method === "POST") {
+        requireUser(req);
+        const body = await readJson(req, 4096);
+        const result = await serialized(async () => {
+          const actor = requireUser(req), snapshot = normalizeSnapshot(await readSnapshot());
+          if (!Number.isSafeInteger(body.expectedRevision) || body.expectedRevision !== snapshot.revision) fail(409, "数据已更新，请刷新后重试审批");
+          const result = approvalWorkflow.transition(snapshot, approvalMatch[1], Number(approvalMatch[2]), actor, body.decision);
+          ensureBalance(result.snapshot);
+          if (result.notification) {
+            const managers = Object.values(users).filter(user => user.role === "region_manager" && Array.isArray(user.regions) && user.regions.includes(result.notification.region));
+            if (!approvalSender || !managers.length) { result.notification.status = "blocked"; result.notification.reason = !approvalSender ? "sms_not_configured" : "no_region_manager"; }
+          }
+          await writeSnapshot(result.snapshot);
+          return result;
+        });
+        sendJson(res, 200, { ok: true, revision: result.snapshot.revision, record: result.record, notification: result.notification && approvalWorkflow.publicNotification(result.notification) });
+        scheduleNotifications();
+      } else if (url === "/api/approvals/notifications" && req.method === "GET") {
+        requireUser(req);
+        await queue;
+        const snapshot = normalizeSnapshot(await readSnapshot()), query = new URL(req.url, "http://localhost").searchParams;
+        const actor = requireUser(req);
+        if (!["admin", "leader", "region_manager"].includes(actor.role)) fail(403, "无权查看审批短信状态");
+        const kind = query.get("kind"), id = query.get("id");
+        const events = (snapshot.approvalOutbox || []).filter(event => {
+          if (kind && event.kind !== kind || id && String(event.recordId) !== id) return false;
+          const employee = snapshot.employees.find(row => row.id === event.employeeId);
+          return actor.role === "admin" || actor.role === "region_manager" && (actor.regions || []).includes(event.region) || actor.role === "leader" && employee && employee.building && actor.buildings.includes(employee.building);
+        });
+        sendJson(res, 200, { ok: true, notifications: events.map(approvalWorkflow.publicNotification) });
+      } else if (retryMatch && req.method === "POST") {
+        requireAdmin(req); rateLimit(req, "approval-retry", 10);
+        const body = await readJson(req, 4096);
+        await serialized(async () => {
+          requireAdmin(req);
+          const snapshot = normalizeSnapshot(await readSnapshot()), event = (snapshot.approvalOutbox || []).find(row => row.id === retryMatch[1]);
+          if (!event) fail(404, "通知记录不存在");
+          if (event.status === "sent") fail(409, "通知已发送，无需重试");
+          if (notificationsRunning && Object.values(event.deliveries).some(row => row.status === "sending")) fail(409, "通知正在发送，请稍后核对结果");
+          if (event.status === "uncertain" && body.confirmDuplicateRisk !== true) fail(409, "发送结果不确定，重试可能重复；请核对后明确确认");
+          for (const [key, row] of Object.entries(event.deliveries)) if (row.status !== "sent") delete event.deliveries[key];
+          event.status = "pending"; event.reason = ""; event.updatedAt = new Date().toISOString(); snapshot.revision++;
+          await writeSnapshot(snapshot);
+        });
+        sendJson(res, 200, { ok: true }); scheduleNotifications();
+      } else if (url === "/api/employees/export" && req.method === "GET") {
         const initialActor = requireUser(req);
         if (!["admin", "leader"].includes(initialActor.role)) fail(403, "仅管理员和楼长可导出人员信息");
         await queue;
@@ -632,7 +732,7 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         await serialized(async () => {
           const old = users[username];
           const role = body.role === undefined && old ? old.role : body.role;
-          if (!["admin", "leader", "user"].includes(role)) fail(400, "角色无效");
+          if (!["admin", "leader", "region_manager", "user"].includes(role)) fail(400, "角色无效");
           if (username === actor.username && role !== "admin") fail(400, "不能取消当前管理员权限");
           if (username === "admin" && role !== "admin") fail(400, "默认管理员角色不能更改");
           const name = body.name === undefined && old ? old.name : text(body.name);
@@ -657,7 +757,10 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
           if (phone && Object.entries(users).some(([key, user]) => key !== username && (key === phone || user.phone === phone))) fail(409, "手机号已被其他账号使用");
           const buildings = role === "leader" ? (body.buildings === undefined && old ? old.buildings || [] : body.buildings) : [];
           if (!Array.isArray(buildings) || buildings.some(b => typeof b !== "string" || !b.trim() || b.length > 100) || (role === "leader" && !buildings.length)) fail(400, "请为楼长分配负责楼栋");
-          const user = { ...(old || {}), name, phone, role, employeeId: employeeId || null, buildings: [...new Set(buildings.map(b => b.trim()))], createdAt: old ? old.createdAt : new Date().toISOString() };
+          const regions = role === "region_manager" ? (body.regions === undefined && old ? old.regions || [] : body.regions) : [];
+          if (!Array.isArray(regions) || regions.some(region => typeof region !== "string" || !region.trim() || region.length > 100) || (role === "region_manager" && !regions.length)) fail(400, "请为区域经理分配负责区域");
+          if (role === "region_manager" && !PHONE.test(phone)) fail(400, "请为区域经理填写有效的短信接收手机号");
+          const user = { ...(old || {}), name, phone, role, employeeId: employeeId || null, buildings: [...new Set(buildings.map(b => b.trim()))], regions: [...new Set(regions.map(region => region.trim()))], createdAt: old ? old.createdAt : new Date().toISOString() };
           if (body.password) { validatePassword(body.password, role === "admin" ? 12 : 8); const password = await hashPassword(body.password); user.passwordHash = password.hash; user.passwordSalt = password.salt; }
           else if (!old) fail(400, "新账号必须设置密码");
           users[username] = user; saveUsers();
@@ -671,9 +774,10 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
         await serialized(async () => { if (!Object.prototype.hasOwnProperty.call(users, username)) fail(404, "账号不存在"); delete users[username]; saveUsers(); invalidateUser(username); });
         sendJson(res, 200, { ok: true });
       } else if (url === "/api/data/snapshot.json" && req.method === "GET") {
-        const user = requireUser(req);
+        requireUser(req);
         await queue;
-        sendJson(res, 200, scopedSnapshot(await readSnapshot(), user));
+        const snapshot = await readSnapshot();
+        sendJson(res, 200, scopedSnapshot(snapshot, requireUser(req)));
       } else if (url === "/api/data/snapshot.json" && req.method === "POST") {
         const user = requireUser(req), incoming = await readJson(req);
         const result = await serialized(async () => {
@@ -705,6 +809,7 @@ function createAuthService({ dataDir, readSnapshot, writeSnapshot, smsVerificati
     }
     return true;
   }
+  scheduleNotifications();
   return { handle, getUser, requireUser, requireAdmin, checkOrigin, serialized };
 }
 

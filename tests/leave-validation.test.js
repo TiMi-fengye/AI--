@@ -79,16 +79,17 @@ test("invalid calendar, time, precision and reversed or empty minute ranges are 
   }
 });
 
-test("legacy annual and sick date-only requests can still be approved and retained without invented times", () => {
+test("legacy annual and sick date-only requests retain their dates and cannot bypass the dedicated approval endpoint", () => {
   for (const type of ["annual", "sick"]) {
     const source = snapshot();
     source.leaveRequests.push(leave({ type, startDate: "2026-11-18", endDate: "2026-11-18" }));
     for (const manager of [admin, leader]) {
       const incoming = scopedSnapshot(source, manager);
       incoming.leaveRequests[0].status = "approved";
-      const result = mergeSnapshot(source, incoming, manager);
+      assert.throws(() => mergeSnapshot(source, incoming, manager), error => error.status === 403);
+      const result = mergeSnapshot(source, scopedSnapshot(source, manager), manager);
       assert.equal(result.leaveRequests[0].type, type);
-      assert.equal(result.leaveRequests[0].status, "approved");
+      assert.equal(result.leaveRequests[0].status, "pending");
       assert.equal(result.leaveRequests[0].startDate, "2026-11-18");
       assert.equal(result.leaveRequests[0].endDate, "2026-11-18");
     }
@@ -121,5 +122,5 @@ test("existing type, day count and compensatory balance validation still applies
   source.leaveRequests.push(leave({ type: "compensatory", hours: 2 }));
   const incoming = scopedSnapshot(source, leader);
   incoming.leaveRequests[0].status = "approved";
-  assert.throws(() => mergeSnapshot(source, incoming, leader), error => error.status === 400 && /超过可用余额/.test(error.message));
+  assert.throws(() => mergeSnapshot(source, incoming, leader), error => error.status === 403 && /审批/.test(error.message));
 });

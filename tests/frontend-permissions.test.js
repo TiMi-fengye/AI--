@@ -33,6 +33,7 @@ function fixture(role = 'user', employeeId = 1, buildings = []) {
       currentUser: () => user,
       isAdmin: () => role === 'admin',
       isLeader: () => role === 'leader',
+      isRegionalManager: () => role === 'region_manager',
       canAccessEmployee: (id) => employees.some((emp) => emp.id === Number(id) && (role === 'admin' || (role === 'leader' ? buildings.includes(emp.building) : emp.id === employeeId))),
       canManageEmployee: (id) => role !== 'user' && sandbox.Auth.canAccessEmployee(id)
     },
@@ -58,7 +59,14 @@ function fixture(role = 'user', employeeId = 1, buildings = []) {
       addAttendance: (record) => calls.mutations.push(['addAttendance', record]),
       updateAttendance: (...args) => calls.mutations.push(['updateAttendance', ...args]),
       deleteAttendance: (...args) => calls.mutations.push(['deleteAttendance', ...args]),
-      flushServerSync: async () => true
+      flushServerSync: async () => true,
+      submitApproval: async (kind, id, decision) => {
+        calls.mutations.push(['submitApproval', kind, id, decision]);
+        const record = (kind === 'overtime' ? overtime : leaves).find(row => row.id === id);
+        const regional = decision === 'approved' && (kind === 'overtime' || ['statutoryAnnual', 'welfareAnnual', 'paidSick'].includes(record.type));
+        Object.assign(record, {status: regional ? 'pending' : decision, approvalStage: regional ? 'regional' : 'complete'});
+        return {ok: true, record};
+      }
     },
     App: {
       currentPage: 'attendance',
@@ -130,7 +138,7 @@ test('floor leader sees and manages only their own building including direct cal
   assert.deepEqual(Array.from(f.Leave._records(), (record) => record.id), [41, 42, 61]);
   const html = f.Overtime._renderTable(f.overtime, f.employees) + f.Leave._renderTable(f.leaves, f.employees);
   assert.match(html, /同栋他人加班/);
-  assert.match(html, /批准<\/button>/);
+  assert.match(html, /初审通过<\/button>/);
   assert.doesNotMatch(html, /楼栋B|已删除人员/);
   await f.Overtime.reject(21);
   await f.Leave.approve(51);
@@ -138,7 +146,7 @@ test('floor leader sees and manages only their own building including direct cal
   assert.equal(f.calls.mutations.length, 0);
   await f.Overtime.approve(31);
   assert.equal(f.calls.mutations.length, 1);
-  assert.equal(f.calls.mutations[0][1], 31);
+  assert.deepEqual(f.calls.mutations[0], ['submitApproval', 'overtime', 31, 'approved']);
 });
 
 test('administrator retains all existing employees and management operations', async () => {
@@ -146,7 +154,7 @@ test('administrator retains all existing employees and management operations', a
   assert.equal(f.Overtime._employees().length, 3);
   assert.equal(f.Overtime._records().length, 5);
   await f.Leave.approve(51);
-  assert.equal(f.calls.mutations[0][0], 'updateLeaveRequest');
+  assert.deepEqual(f.calls.mutations[0], ['submitApproval', 'leaveRequests', 51, 'approved']);
   f.Attendance._activeTab = 'attendance';
   f.Attendance.render(f.elements.pageContent);
   assert.match(f.elements.attSubContent.innerHTML, /签到\/签退/);
