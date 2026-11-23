@@ -58,7 +58,11 @@ test("real MySQL migration keeps every entity, identity and attachment atomic, r
     assert.equal(done.tables.length, TABLES.length + AUTH_TABLES.length); assert.match(done.tablesSha256, /^[a-f0-9]{64}$/);
     const readOnly = await verify(params); assert.equal(readOnly.databaseWritten, false); assert.equal(readOnly.tablesSha256, done.tablesSha256); assert.equal(readOnly.contentSha256, done.contentSha256);
     const store = createMySQLStore(pool), identity = createMySQLAuthStore(store);
-    assert.deepEqual(await store.read(), business); assert.deepEqual(await identity.readUsers(), privateState.users); assert.deepEqual(await identity.readOrganization(), privateState.organization);
+    assert.deepEqual(await store.read(), business);
+    // Account maps deliberately have no prototype, including after SQL reads.
+    // Preserve that security property while checking every migrated field.
+    assert.deepEqual(await identity.readUsers(), Object.assign(Object.create(null), privateState.users));
+    assert.deepEqual(await identity.readOrganization(), privateState.organization);
     const [[frozen]] = await pool.query("SELECT payload FROM system_snapshots WHERE snapshot_key='default'"); assert.equal(frozen.payload, source);
     const next = await store.read(); next.revision++; next.employees[0].name = "合成迁移后新业务";
     await store.write(next, { expectedRevision: 18 });
