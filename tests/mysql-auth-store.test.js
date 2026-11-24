@@ -34,7 +34,7 @@ test("normal startup requires enabled initialized MySQL and never falls back to 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "hr-mysql-required-"));
   t.after(() => { const resolved = path.resolve(directory); assert.equal(path.dirname(resolved), path.resolve(os.tmpdir())); assert.match(path.basename(resolved), /^hr-mysql-required-/); fs.rmSync(resolved, { recursive: true, force: true }); });
   const code = path.join(directory, "server"), data = path.join(directory, "synthetic-data"); fs.mkdirSync(code); fs.mkdirSync(data);
-  for (const file of ["server.js", "auth-service.js", "approval-workflow.js", "approval-notifications.js", "sms-verification.js", "sms-aliyun.js", "mysql-store.js", "mysql-auth-store.js"]) fs.copyFileSync(path.join(__dirname, "../server", file), path.join(code, file));
+  for (const file of ["server.js", "auth-service.js", "approval-workflow.js", "approval-notifications.js", "sms-verification.js", "sms-aliyun.js", "mysql-store.js", "mysql-auth-store.js", "ai-reporting.js", "ai-provider.js", "ai-service.js"]) fs.copyFileSync(path.join(__dirname, "../server", file), path.join(code, file));
   fs.writeFileSync(path.join(code, "config.json"), JSON.stringify({ mysql: { enabled: false } }));
   for (const name of ["snapshot.json", "auth-users.json", "organization-settings.json"]) fs.writeFileSync(path.join(data, name), "available-but-must-not-be-used");
   const env = { HR_DATA_DIR: data, HR_NO_OPEN: "1" }; if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;

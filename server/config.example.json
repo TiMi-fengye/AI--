@@ -19,7 +19,7 @@
   "ai": {
     "enabled": false,
     "endpoint": "https://api.deepseek.com/chat/completions",
-    "model": "deepseek-chat",
+    "model": "deepseek-flash",
     "apiKey": ""
   },
   "approvalSms": {

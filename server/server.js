@@ -9,6 +9,8 @@ const { createSmsVerification } = require("./sms-verification");
 const { createAliyunSmsSender } = require("./sms-aliyun");
 const { createMySQLStore } = require("./mysql-store");
 const { createMySQLAuthStore } = require("./mysql-auth-store");
+const { createAIProvider, createPrivateSettingsStore } = require("./ai-provider");
+const { createAIService } = require("./ai-service");
 
 // 读取配置
 // Explicit file-mode test processes may point at their own synthetic config;
@@ -256,35 +258,27 @@ const auth = createAuthService({
   }
 });
 
+const aiSettings = createPrivateSettingsStore({ file: path.join(DATA_DIR, "ai-settings.json"), base: CONFIG.ai || {} });
+const aiProvider = createAIProvider({ getSettings: aiSettings.get, saveSettings: aiSettings.set });
+const aiService = createAIService({ auth, provider: aiProvider, readBundle: async () => {
+  if (STORAGE_MODE === "mysql") { await initMySQL(); return MYSQL_STORE.read(); }
+  try { return JSON.parse(await fs.promises.readFile(snapshotFilePath(), "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return null; throw error; }
+} });
+
 async function handleRequest(req, res) {
   let url;
   try { url = new URL(req.url, "http://localhost").pathname; } catch { sendJson(res, 400, { ok: false, message: "请求地址无效" }); return; }
   if (url === "/") url = "/index.html";
   if (url.startsWith("/api/") && !["GET", "HEAD"].includes(req.method) && isMigrationReadOnly()) { sendJson(res, 503, { ok: false, message: "数据库迁移校验中，系统暂为只读，请稍后重试" }); return; }
   if (await auth.handle(req, res, url)) return;
+  if (await aiService.handle(req, res, url)) return;
   if (url.startsWith("/api/wechat/") || /^\/api\/feishu\/(?:login-config|auth-url|auth-code|callback)$/.test(url)) {
     sendJson(res, 410, { ok: false, enabled: false, message: "第三方登录已停用，请使用手机号登录" }); return;
   }
   if (url.startsWith("/api/")) {
     try { await auth.refreshUsers(); auth.checkOrigin(req); auth.requireAdmin(req); }
     catch (error) { sendJson(res, error.status || 500, { ok: false, message: error.message }); return; }
-  }
-
-  // AI 统一代理：密钥只保存在服务端配置或环境变量中，浏览器不直连第三方接口。
-  if (url === "/api/ai/chat" && req.method === "POST") {
-    readRequestBody(req).then(async body => {
-      const ai = CONFIG.ai || {};
-      const endpoint = process.env.HR_AI_ENDPOINT || ai.endpoint;
-      const apiKey = process.env.HR_AI_API_KEY || ai.apiKey;
-      const model = String(body.model || process.env.HR_AI_MODEL || ai.model || "deepseek-chat");
-      if (!endpoint || !apiKey) { json(res, 503, { error: { message: "AI 尚未配置，请联系管理员完成服务端 AI 配置" } }); return; }
-      const headers = { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey };
-      const upstream = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify({ ...body, model, stream: false }) });
-      const text = await upstream.text();
-      res.writeHead(upstream.status, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(text);
-    }).catch(e => json(res, 502, { error: { message: "AI 服务请求失败: " + e.message } }));
-    return;
   }
 
   if (url === "/api/feishu/config") {

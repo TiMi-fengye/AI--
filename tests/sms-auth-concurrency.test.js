@@ -11,7 +11,7 @@ const { spawnSync } = require("node:child_process");
 const { createSmsVerification } = require("../server/sms-verification");
 
 const root = path.resolve(__dirname, "..");
-const publicServerFiles = ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js", "mysql-store.js", "mysql-auth-store.js"];
+const publicServerFiles = ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js", "mysql-store.js", "mysql-auth-store.js", "ai-reporting.js", "ai-provider.js", "ai-service.js"];
 
 function temporary(t) {
   const directory = fs.mkdtempSync(path.join(root, ".sms-auth-isolated-"));

@@ -89,7 +89,7 @@ const Auth = {
   canAccessPage(page) {
     if (!this._user) return false;
     if (this.isAdmin()) return true;
-    if (this.isLeader()) return ['dashboard', 'employees', 'attendance', 'leave', 'overtime', 'profile', 'hours', 'cost', 'performance'].includes(page);
+    if (this.isLeader()) return ['dashboard', 'employees', 'attendance', 'leave', 'overtime', 'profile', 'hours', 'cost', 'performance', 'ai'].includes(page);
     if (this.isRegionalManager()) return ['profile', 'attendance', 'leave', 'overtime', 'hours'].includes(page);
     return ['profile', 'attendance', 'leave', 'overtime', 'hours'].includes(page);
   },

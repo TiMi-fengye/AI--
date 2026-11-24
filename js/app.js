@@ -12,7 +12,7 @@ const App = {
     { page: "performance", icon: "📊", label: "绩效管理" },
     { page: "cost", icon: "💰", label: "费用结算" },
     { page: "org", icon: "🏢", label: "组织架构" },
-    { page: "ai", icon: "🤖", label: "AI 智能问答" },
+    { page: "ai", icon: "🤖", label: "AI 查询与报表" },
     { page: "admin", icon: "⚙️", label: "系统设置" },
   ],
 
@@ -359,7 +359,7 @@ const App = {
       cost: '💰 费用结算',
       admin: '⚙️ 系统管理',
       org: '🏢 组织架构',
-      ai: '🤖 AI 智能问答'
+      ai: '🤖 AI 查询与报表'
     };
     document.getElementById('pageTitle').textContent = titles[page] || '数据看板';
 

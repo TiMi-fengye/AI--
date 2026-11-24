@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "relationalBaselineSha256": "83e9e6a03a0599fee90a892bfbabb9b800d529b60d66c8dadfae1013426e6e63",
+  "backupToolSha256": "34cae4644d5d1236db7477d201e065eedd35f964a4668f179998bc0d746faac6",
+  "files": {
+    "server/auth-service.js": {
+      "beforeSha256": "262307ac33c0199616a1ae55e9e339f0b9dc49903fa363c4ecc0ecb484bf875d",
+      "afterSha256": "262307ac33c0199616a1ae55e9e339f0b9dc49903fa363c4ecc0ecb484bf875d"
+    },
+    "server/server.js": {
+      "beforeSha256": "8befb3a265b22ee02f5cdcaa164cfb4b0f8ab5b96145d6a3f91aa53ab7e2e191",
+      "patches": [
+        {
+          "old": "const { createMySQLStore } = require(\"./mysql-store\");\nconst { createMySQLAuthStore } = require(\"./mysql-auth-store\");\n\n// 读取配置\n// Explicit file-mode test processes may point at their own synthetic config;\n",
+          "new": "const { createMySQLStore } = require(\"./mysql-store\");\nconst { createMySQLAuthStore } = require(\"./mysql-auth-store\");\nconst { createAIProvider, createPrivateSettingsStore } = require(\"./ai-provider\");\nconst { createAIService } = require(\"./ai-service\");\n\n// 读取配置\n// Explicit file-mode test processes may point at their own synthetic config;\n"
+        },
+        {
+          "old": "  }\n});\n\nasync function handleRequest(req, res) {\n  let url;\n  try { url = new URL(req.url, \"http://localhost\").pathname; } catch { sendJson(res, 400, { ok: false, message: \"请求地址无效\" }); return; }\n  if (url === \"/\") url = \"/index.html\";\n  if (url.startsWith(\"/api/\") && ![\"GET\", \"HEAD\"].includes(req.method) && isMigrationReadOnly()) { sendJson(res, 503, { ok: false, message: \"数据库迁移校验中，系统暂为只读，请稍后重试\" }); return; }\n  if (await auth.handle(req, res, url)) return;\n  if (url.startsWith(\"/api/wechat/\") || /^\\/api\\/feishu\\/(?:login-config|auth-url|auth-code|callback)$/.test(url)) {\n    sendJson(res, 410, { ok: false, enabled: false, message: \"第三方登录已停用，请使用手机号登录\" }); return;\n  }\n  if (url.startsWith(\"/api/\")) {\n    try { await auth.refreshUsers(); auth.checkOrigin(req); auth.requireAdmin(req); }\n    catch (error) { sendJson(res, error.status || 500, { ok: false, message: error.message }); return; }\n  }\n\n  // AI 统一代理：密钥只保存在服务端配置或环境变量中，浏览器不直连第三方接口。\n  if (url === \"/api/ai/chat\" && req.method === \"POST\") {\n    readRequestBody(req).then(async body => {\n      const ai = CONFIG.ai || {};\n      const endpoint = process.env.HR_AI_ENDPOINT || ai.endpoint;\n      const apiKey = process.env.HR_AI_API_KEY || ai.apiKey;\n      const model = String(body.model || process.env.HR_AI_MODEL || ai.model || \"deepseek-chat\");\n      if (!endpoint || !apiKey) { json(res, 503, { error: { message: \"AI 尚未配置，请联系管理员完成服务端 AI 配置\" } }); return; }\n      const headers = { \"Content-Type\": \"application/json\", \"Authorization\": \"Bearer \" + apiKey };\n      const upstream = await fetch(endpoint, { method: \"POST\", headers, body: JSON.stringify({ ...body, model, stream: false }) });\n      const text = await upstream.text();\n      res.writeHead(upstream.status, { \"Content-Type\": \"application/json; charset=utf-8\" });\n      res.end(text);\n    }).catch(e => json(res, 502, { error: { message: \"AI 服务请求失败: \" + e.message } }));\n    return;\n  }\n\n  if (url === \"/api/feishu/config\") {\n",
+          "new": "  }\n});\n\nconst aiSettings = createPrivateSettingsStore({ file: path.join(DATA_DIR, \"ai-settings.json\"), base: CONFIG.ai || {} });\nconst aiProvider = createAIProvider({ getSettings: aiSettings.get, saveSettings: aiSettings.set });\nconst aiService = createAIService({ auth, provider: aiProvider, readBundle: async () => {\n  if (STORAGE_MODE === \"mysql\") { await initMySQL(); return MYSQL_STORE.read(); }\n  try { return JSON.parse(await fs.promises.readFile(snapshotFilePath(), \"utf8\")); }\n  catch (error) { if (error.code === \"ENOENT\") return null; throw error; }\n} });\n\nasync function handleRequest(req, res) {\n  let url;\n  try { url = new URL(req.url, \"http://localhost\").pathname; } catch { sendJson(res, 400, { ok: false, message: \"请求地址无效\" }); return; }\n  if (url === \"/\") url = \"/index.html\";\n  if (url.startsWith(\"/api/\") && ![\"GET\", \"HEAD\"].includes(req.method) && isMigrationReadOnly()) { sendJson(res, 503, { ok: false, message: \"数据库迁移校验中，系统暂为只读，请稍后重试\" }); return; }\n  if (await auth.handle(req, res, url)) return;\n  if (await aiService.handle(req, res, url)) return;\n  if (url.startsWith(\"/api/wechat/\") || /^\\/api\\/feishu\\/(?:login-config|auth-url|auth-code|callback)$/.test(url)) {\n    sendJson(res, 410, { ok: false, enabled: false, message: \"第三方登录已停用，请使用手机号登录\" }); return;\n  }\n  if (url.startsWith(\"/api/\")) {\n    try { await auth.refreshUsers(); auth.checkOrigin(req); auth.requireAdmin(req); }\n    catch (error) { sendJson(res, error.status || 500, { ok: false, message: error.message }); return; }\n  }\n\n  if (url === \"/api/feishu/config\") {\n"
+        }
+      ],
+      "afterSha256": "dbf413f1c31a376eafebbb62d06ab260f6e4be4069924aba162d5a4de3888c2f"
+    },
+    "js/ai.js": {
+      "beforeSha256": "c59114a2543a793932e6bdcd251ebd37a523efa8989f029cfdf083f6b668309e",
+      "afterSha256": "1c669f7e59115387c04d34d2d4f7769820198655cf95a5b76cabd647ea9b2a35"
+    },
+    "js/auth.js": {
+      "beforeSha256": "60943663daee29ed34049dd2395aca8d1dd9fcf5b2f74979eeb345fa88aaa07f",
+      "patches": [
+        {
+          "old": "  canAccessPage(page) {\n    if (!this._user) return false;\n    if (this.isAdmin()) return true;\n    if (this.isLeader()) return ['dashboard', 'employees', 'attendance', 'leave', 'overtime', 'profile', 'hours', 'cost', 'performance'].includes(page);\n    if (this.isRegionalManager()) return ['profile', 'attendance', 'leave', 'overtime', 'hours'].includes(page);\n    return ['profile', 'attendance', 'leave', 'overtime', 'hours'].includes(page);\n  },\n",
+          "new": "  canAccessPage(page) {\n    if (!this._user) return false;\n    if (this.isAdmin()) return true;\n    if (this.isLeader()) return ['dashboard', 'employees', 'attendance', 'leave', 'overtime', 'profile', 'hours', 'cost', 'performance', 'ai'].includes(page);\n    if (this.isRegionalManager()) return ['profile', 'attendance', 'leave', 'overtime', 'hours'].includes(page);\n    return ['profile', 'attendance', 'leave', 'overtime', 'hours'].includes(page);\n  },\n"
+        }
+      ],
+      "afterSha256": "af5ad6f860f684853ed44f7a5fcce9e1c2785abfcdb990611aac9336dd4753c9"
+    },
+    "js/app.js": {
+      "beforeSha256": "477afe781ff950d9e228a168270bf5134d4ea4dfcbc5b1108fac39178f7594c3",
+      "afterSha256": "2b89879e7adb648e9ef48b237f0dc4708b0d6f6da436216192fcd2b5fb63ce46"
+    },
+    "js/employee-profile.js": {
+      "beforeSha256": "fefe96cc1d57eb9397aa66aa8488bc8fd4e2b0287196c4c33621e6eac4f51942",
+      "afterSha256": "9d65f398edf3e9345670aa275f6265fd40cb5746158f13cdabdbb6e6843070df"
+    },
+    "server/ai-reporting.js": {
+      "beforeSha256": null,
+      "afterSha256": "4179172dfed58623e1bb0f7b872312c1cf4e9bda1e4ef84ca2c107d64414c304"
+    },
+    "server/ai-provider.js": {
+      "beforeSha256": null,
+      "afterSha256": "df65457ee3a0f6dbbdd3536cef42e5f7fb396ea53f2bbd8fee4228022aaab1bf"
+    },
+    "server/ai-service.js": {
+      "beforeSha256": null,
+      "afterSha256": "08d473758fa1b2ee4a9777e08c12ac6097a6bbcec7dad99e3efbc696ff51b5e6"
+    }
+  }
+}

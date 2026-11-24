@@ -86,7 +86,7 @@ const EmpProfile = {
   async _doAutoAnalyze(id,text) {
     if (!this._canAnalyze(id)) return;
     var ai=typeof AI!=='undefined'?AI:null, cfg=ai?ai.getConfig():null;
-    if (!cfg||!cfg.endpoint) { App.toast('请先在AI问答中配置 API','warning'); return; }
+    if (!cfg||!cfg.endpoint) { App.toast('请先由管理员在 AI 查询与报表中配置服务','warning'); return; }
     var prompt='你是专业的HR分析师。根据以下简历内容，分析该人员掌握的核心技能、技术栈和工作背景，生成约100字的人员简介。\n\n简历内容：\n'+String(text).slice(0,5000);
     try {
       var response=await fetch(cfg.endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:cfg.model,messages:[{role:'user',content:prompt}],max_tokens:512,temperature:0.7,stream:false})});

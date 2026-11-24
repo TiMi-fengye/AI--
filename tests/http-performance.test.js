@@ -43,7 +43,7 @@ async function fixture(t) {
   fs.mkdirSync(data);
   // Copy only explicitly public code. Loading server.js in this isolated tree
   // cannot read the workspace's private config.json, auth users or data files.
-  for (const file of ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js", "mysql-store.js", "mysql-auth-store.js"]) {
+  for (const file of ["server.js", "auth-service.js", "sms-verification.js", "sms-aliyun.js", "approval-workflow.js", "approval-notifications.js", "mysql-store.js", "mysql-auth-store.js", "ai-reporting.js", "ai-provider.js", "ai-service.js"]) {
     fs.copyFileSync(path.join(sourceRoot, "server", file), path.join(directory, "server", file));
   }
   const text = "/* 合成性能测试，不含真实人员 */\n" + "var syntheticValue = '示例字符串';\n".repeat(600);
@@ -91,6 +91,24 @@ async function fixture(t) {
   }
   return { base, directory, text, json, accounts };
 }
+
+test("AI routes use real sessions and server scope before the legacy administrator API gate", async t => {
+  const f = await fixture(t), accounts = await f.accounts();
+  const request = { periodType: "monthly", year: 2026, month: 11, includeAnalysis: true };
+  assert.equal((await f.json("/api/ai/reports", "POST", request)).status, 401);
+  const admin = await f.json("/api/ai/reports", "POST", request, accounts.admin);
+  const leader = await f.json("/api/ai/reports", "POST", request, accounts.leader);
+  assert.equal(admin.status, 200); assert.equal(admin.data.report.summary.personnel.total, 2);
+  assert.equal(leader.status, 200); assert.equal(leader.data.report.summary.personnel.total, 1);
+  assert.equal(leader.data.ai.status, "unconfigured"); assert.equal(leader.headers["cache-control"], "no-store");
+  assert.doesNotMatch(JSON.stringify(leader.data), /B栋演示人员|1380000000|data:text/);
+  assert.equal((await f.json("/api/ai/reports", "POST", request, accounts.member)).status, 403);
+  assert.equal((await f.json("/api/ai/settings", "GET", undefined, accounts.leader)).status, 403);
+  assert.equal((await f.json("/api/ai/chat", "POST", { messages: [{ role: "user", content: "test" }] }, accounts.leader)).status, 403);
+  assert.equal((await f.json("/api/ai/settings", "GET", undefined, accounts.admin)).data.settings.apiKeyConfigured, false);
+  assert.equal((await f.json("/api/ai/test", "POST", {}, accounts.admin)).status, 503);
+  for (const target of ["/server/ai-service.js", "/server/ai-provider.js", "/server/data/ai-settings.json"]) assert.equal((await rawRequest(f.base, target)).status, 404);
+});
 
 test("Accept-Encoding尊重gzip禁用、通配符与坏q值，不误认其他编码", () => {
   for (const header of [undefined, "", "br", "xgzip", "gzip;q=0", "GZIP; q=0.000", "*;q=1,gzip;q=0", "gzip;q=invalid", "gzip;q=1.1", "gzip;q=.5", "gzip;q=1.0000", "gzip;foo=bar", "gzip,gzip;q=0"]) assert.equal(acceptsGzip(header), false, String(header));

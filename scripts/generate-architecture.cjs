@@ -50,7 +50,7 @@ function collectFiles() {
   for (const entry of fs.readdirSync(ROOT, { withFileTypes: true })) {
     if (entry.isFile() && entry.name !== OUTPUT && (/\.html$/.test(entry.name) || /^(?:README|AGENTS|\d{4}-\d{2}-\d{2})\.md$/.test(entry.name))) found.push(entry.name);
   }
-  for (const relative of ["server/server.js", "server/auth-service.js", "server/sms-verification.js", "server/sms-aliyun.js", "server/approval-workflow.js", "server/approval-notifications.js", "server/mysql-store.js", "server/mysql-auth-store.js", "server/migrate-mysql.js", "server/package.json", "server/config.example.json", "deploy/sms.env.example", "deploy/approval-sms.env.example", "deploy/approval-workflow-release.json", "deploy/mysql-relational-release.json", "sw.js", "manifest.json", ".gitignore", "LICENSE-SheetJS.txt", ".github/CODEOWNERS"]) {
+  for (const relative of ["server/server.js", "server/auth-service.js", "server/sms-verification.js", "server/sms-aliyun.js", "server/approval-workflow.js", "server/approval-notifications.js", "server/mysql-store.js", "server/mysql-auth-store.js", "server/migrate-mysql.js", "server/ai-reporting.js", "server/ai-provider.js", "server/ai-service.js", "server/package.json", "server/config.example.json", "deploy/sms.env.example", "deploy/approval-sms.env.example", "deploy/approval-workflow-release.json", "deploy/mysql-relational-release.json", "deploy/ai-reporting-release.json", "sw.js", "manifest.json", ".gitignore", "LICENSE-SheetJS.txt", ".github/CODEOWNERS"]) {
     if (fs.existsSync(safeFile(relative))) found.push(relative);
   }
   // Explicit public directories only. Never recurse into server/, server/data,
