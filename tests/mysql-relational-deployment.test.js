@@ -274,7 +274,7 @@ with tempfile.TemporaryDirectory() as folder:
  spec=importlib.util.spec_from_file_location('separate_repaired_relational',tool/executing.name)
  m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
  assert pathlib.Path(m.base.__file__).parent==tool and pathlib.Path(m.base.primitives.__file__).parent==tool and pathlib.Path(m.helper.__file__).parent==tool
- if os.name!='posix':m.os=types.SimpleNamespace(**{**vars(os),'name':'posix','geteuid':lambda:0})
+ if mode in ('check','default-check'):m.os=types.SimpleNamespace(**{**vars(os),'name':'posix','geteuid':lambda:0})
  sys.modules['grp']=types.SimpleNamespace(getgrnam=lambda name:types.SimpleNamespace(gr_gid=71))
  m.APP=root/'application';m.APP.mkdir();m.HOLD=root/'gate';data=root/'data';data.mkdir();m.helper.BACKUPS=root/'publication-backups'
  current={name:None if name in m.VARIANTS['attendance-delete'] else ('// old '+name+'\\n').encode() for name in m.CODE};current[m.HTML]=b'old offline architecture'
