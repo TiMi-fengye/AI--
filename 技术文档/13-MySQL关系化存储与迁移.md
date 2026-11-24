@@ -63,3 +63,6 @@ MySQL的建表语句会隐式提交，因此不能声称“建表也全部回滚
 重试采用两个独立固定目录：修复后的发布器及其实际helper从新审阅版本运行，`--source`仍指向未修改的 `abf244ec868b2b46f45297bd332652e50dc06e6a` 业务包，原始业务清单SHA256仍是 `83e9e6a03a0599fee90a892bfbabb9b800d529b60d66c8dadfae1013426e6e63`。业务、关系表结构和备份core均不因此更新；不能把当前包含AI开发变更的主分支源码作为这次关系化业务源。实际执行的发布器和helper另存于root私有发布备份的 `publication-tool/`，用公开文件摘要记录版本，避免只保留业务包中的旧工具。
 
 再次应用前仍会完整预检和生成并校验备份；源码、数据或工具状态不符时停止。不要删除旧备份、强行解除未知闸门、手工覆盖数据库或重复旧失败命令。收到本次 `MYSQL_RELATIONAL_OK` 后，再单独发布固定AI版本并配置模型；模型密钥不通过聊天或公网HTTP输入。修复工具固定版本和CI结果交付前补记。
+
+
+修复工具固定版本 [`e04018db368c392a5035db2b6e37ac44c9522d33`](https://github.com/TiMi-fengye/AI--/commit/e04018db368c392a5035db2b6e37ac44c9522d33)已通过[完整Linux、真实MySQL及实际root检查](https://github.com/TiMi-fengye/AI--/actions/runs/45399810036)，原始工具SHA256 `d38eab365e5bf76a9defc5f5fe359af1a9b98f57fb83cbb7d993b8b0e7ee241d`。重试必须从该固定工具目录运行，`--source`仍取原abf业务包；原清单SHA256 83e9e6a03a0599fee90a892bfbabb9b800d529b60d66c8dadfae1013426e6e63。已提供双包重试命令，待新MYSQL_RELATIONAL_OK回执，不能直接重复原工具命令。后续仅补记结果的文档提交不改变这个固定执行版本。
