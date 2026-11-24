@@ -8,6 +8,7 @@ an ambiguous database state leaves the gate in place for administrator review.
 import argparse
 import ast
 import contextlib
+import datetime
 import hashlib
 import importlib.util
 import json
@@ -493,6 +494,32 @@ def save_release(backup, current, candidates, tool_state, source):
         target = backup / 'reviewed-release' / name
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         target.write_bytes((source / name).read_bytes())
+    audit_publication_tool(backup)
+
+
+def audit_publication_tool(backup):
+    """Retain the actual executing publisher separately from business sources."""
+    expected = ('apply-mysql-relational.py', 'apply-approval-workflow.py',
+                'apply-leave-types-time.py', 'apply-organization-fix.py')
+    paths = tuple(pathlib.Path(value).absolute() for value in
+                  (__file__, base.__file__, base.primitives.__file__, helper.__file__))
+    directory = pathlib.Path(__file__).absolute().parent
+    require(tuple(path.name for path in paths) == expected and all(path.parent == directory for path in paths),
+            'Unexpected publication tool dependency location')
+    contents = {path.name: regular_file(path).read_bytes() for path in paths}
+    target = backup / 'publication-tool'
+    base.require_absent(target)
+    target.mkdir(mode=0o700)
+    contents['manifest.json'] = (json.dumps({'schemaVersion': 1, 'files':
+        {name: raw_hash(content) for name, content in contents.items()}}) + '\n').encode('utf-8')
+    for name, content in contents.items():
+        descriptor = os.open(target / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        base.sync_parent(target / name)
+    base.sync_parent(target)
 
 
 def main(argv=None):

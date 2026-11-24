@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const {spawnSync} = require('node:child_process');
 const python = process.platform === 'win32' ? 'python' : 'python3';
@@ -11,7 +12,10 @@ s=importlib.util.spec_from_file_location('relational_release',sys.argv[1]);m=imp
 v=json.loads(sys.stdin.buffer.read().decode('utf-8'));exec(v['code'])
 `;
 function invoke(code) {
-  const result = spawnSync(python, ['-c', bridge, script], {input: JSON.stringify({code}), encoding: 'utf8', timeout: 15000});
+  const temporary = path.resolve(__dirname, '../.delivery/relational-deployment-test-tmp');
+  fs.mkdirSync(temporary, {recursive: true});
+  const result = spawnSync(python, ['-c', bridge, script], {input: JSON.stringify({code}), encoding: 'utf8', timeout: 15000,
+    env: {...process.env, TEMP: temporary, TMP: temporary, TMPDIR: temporary}});
   assert.ifError(result.error); assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout);
 }
 const model = `import copy,pathlib,tempfile
@@ -258,6 +262,144 @@ test('unexplained relational, legacy-file or full-SQL changes fail closed with t
 test('an error after the final gate release never restores old code or old backup tools', () => {
   const result = invoke("mode='postcommit'\n" + transaction);
   assert.equal(result.ok, true); assert.match(result.error, /committed/);
+});
+
+const mainFixture = model + `
+import contextlib,io,os,re,stat,types
+with tempfile.TemporaryDirectory() as folder:
+ root=pathlib.Path(folder);tool=root/'repaired-tool';tool.mkdir();business=root/'original-business';business.mkdir()
+ executing=pathlib.Path(m.__file__)
+ for name in ('apply-mysql-relational.py','apply-approval-workflow.py','apply-leave-types-time.py','apply-organization-fix.py'):
+  (tool/name).write_bytes((executing.parent/name).read_bytes())
+ spec=importlib.util.spec_from_file_location('separate_repaired_relational',tool/executing.name)
+ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+ assert pathlib.Path(m.base.__file__).parent==tool and pathlib.Path(m.base.primitives.__file__).parent==tool and pathlib.Path(m.helper.__file__).parent==tool
+ if os.name!='posix':m.os=types.SimpleNamespace(**{**vars(os),'name':'posix','geteuid':lambda:0})
+ sys.modules['grp']=types.SimpleNamespace(getgrnam=lambda name:types.SimpleNamespace(gr_gid=71))
+ m.APP=root/'application';m.APP.mkdir();m.HOLD=root/'gate';data=root/'data';data.mkdir();m.helper.BACKUPS=root/'publication-backups'
+ current={name:None if name in m.VARIANTS['attendance-delete'] else ('// old '+name+'\\n').encode() for name in m.CODE};current[m.HTML]=b'old offline architecture'
+ candidate={name:('// new '+name+'\\n').encode() for name in m.CODE};candidate[m.HTML]=b'new offline architecture'
+ document=manifest();document['backupTool']['afterSha256']=m.raw_hash(b'# reviewed public backup core\\n')
+ for variant,model in document['variants'].items():
+  for name,row in model['files'].items():
+   row['beforeSha256']=None if name in m.VARIANTS[variant] else m.canonical_hash(current[name] or b'// existing module\\n')
+   row['afterSha256']=m.canonical_hash(candidate[name])
+   if name in m.PATCH_FILES:row['patches']=[{'old':'old '+name,'new':'new '+name}]
+ for name in m.DOCS:
+  target=business/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(b'public original-package documentation')
+ for name,content in candidate.items():
+  target=business/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(content)
+ old_publisher=b'raise RuntimeError("old business publisher must not execute")\\n';(business/'deploy/apply-mysql-relational.py').write_bytes(old_publisher)
+ (business/m.BACKUP_SOURCE).write_bytes(b'# reviewed public backup core\\n')
+ raw=(json.dumps(document)+'\\n').encode();(business/m.MANIFEST).write_bytes(raw)
+ tools={m.TOOL:b'old private backup tool',m.TOOL_MANIFEST:b'old private installation metadata'};timer={'active':'active','enabled':'enabled'};trace=[]
+ m.helper.runtime=lambda:(data,8080,'synthetic_db');m.service_environment=lambda:{};m.timer_state=lambda:dict(timer);m.capture_sources=lambda gid:dict(current);m.backup_state=lambda expected:dict(tools)
+ m.base.publication_lock=lambda:contextlib.nullcontext()
+ class Lock:
+  def __init__(self,path):self.path=path
+  def __enter__(self):trace.append(('lock-enter',str(self.path)));return self
+  def __exit__(self,*args):trace.append(('lock-exit',str(self.path)))
+ m.MaintenanceLock=Lock
+ def run(args,**kwargs):
+  assert args[0]=='node','host mutation was attempted';trace.append(('isolated-command',str(args[1])));return b''
+ m.helper.run=run
+ def verify(source,stage,values):
+  assert source==business and values==candidate;m.stage_candidates(stage,values);trace.append(('preflight',))
+  if mode=='preflight-fails':raise m.Refused('synthetic preflight refusal')
+ m.verify_candidate_code=verify
+ def migration(script,where,environment,action):
+  assert action=='--check' and script.name=='migrate-mysql.js' and script.parent.parent!=m.APP and script.exists()
+  trace.append(('read-only-migration-check',));return {'counts':{'employees':2},'sourceDigest':'2'*64}
+ m.migration_command=migration
+ full=root/'verified-daily';full.mkdir(mode=0o700);(full/'KEEP').write_bytes(b'complete daily backup');os.chmod(full/'KEEP',0o600)
+ def backup():
+  trace.append(('full-backup-verified',))
+  if mode=='backup-fails':raise m.Refused('synthetic full backup refusal')
+  return str(full)
+ m.full_daily_backup=backup
+ real_save=m.save_release
+ def save(backup,current_arg,candidate_arg,tools_arg,source):
+  assert source==business and current_arg==current and candidate_arg==candidate and tools_arg==tools
+  assert re.match(r'\\d{4}-\\d{2}-\\d{2}-mysql-relational-\\d{6}-',backup.name)
+  info=backup.stat();assert info.st_uid==0 and stat.S_IMODE(info.st_mode)==0o700
+  trace.append(('save-release-before',str(backup)));real_save(backup,current_arg,candidate_arg,tools_arg,source)
+  assert (backup/'reviewed-release/deploy/apply-mysql-relational.py').read_bytes()==old_publisher
+  actual=backup/'publication-tool';audit=json.loads((actual/'manifest.json').read_text())
+  assert set(audit['files'])=={'apply-mysql-relational.py','apply-approval-workflow.py','apply-leave-types-time.py','apply-organization-fix.py'}
+  assert (actual/'apply-mysql-relational.py').read_bytes()==(tool/'apply-mysql-relational.py').read_bytes()!=old_publisher
+  assert all(m.raw_hash((actual/name).read_bytes())==digest for name,digest in audit['files'].items())
+  assert all(item.stat().st_uid==0 and stat.S_IMODE(item.stat().st_mode)==0o600 for item in backup.rglob('*') if item.is_file())
+  trace.append(('save-release-after',str(backup)))
+  if mode=='save-fails':raise m.Refused('synthetic save refusal')
+ m.save_release=save
+ def transaction(current_arg,candidate_arg,tools_arg,tool_candidate,where,port,database,gid,environment,timer_arg,backup,full_backup,lock,script):
+  trace.append(('transact',str(backup)));assert current_arg==current and candidate_arg==candidate and tools_arg==tools and timer_arg==timer
+  assert where==data and port==8080 and database=='synthetic_db' and gid==71 and full_backup==str(full)
+  assert (backup/'previous-code'/m.AUTH).read_bytes()==current[m.AUTH] and script.exists() and not m.HOLD.exists()
+  if mode=='transact-fails':raise m.Refused('synthetic transact refusal')
+  return {'status':'MYSQL_RELATIONAL_OK','backup':str(backup),'serviceRestarted':True}
+ m.transact=transaction
+ flags=[] if mode=='default-check' else ['--check'] if mode=='check' else ['--apply'];output=io.StringIO();old_mask=os.umask(0o077)
+ try:
+  with contextlib.redirect_stdout(output):m.main(['--source',str(business),'--expected-release-sha256',m.raw_hash(raw),*flags])
+  error=None;result=json.loads(output.getvalue())
+ except m.Refused as failure:error=str(failure);result=None
+ finally:os.umask(old_mask)
+ assert (full/'KEEP').read_bytes()==b'complete daily backup' and not m.HOLD.exists()
+ if mode in ('check','default-check'):
+  assert not error and result['status']=='MYSQL_RELATIONAL_CHECK' and not result['serviceRestarted'] and not m.helper.BACKUPS.exists()
+  assert not any(row[0] in ('full-backup-verified','save-release-before','transact') for row in trace)
+ elif mode=='apply':
+  assert not error and result['status']=='MYSQL_RELATIONAL_OK' and result['variant']=='attendance-delete'
+  assert [row[0] for row in trace if row[0] in ('full-backup-verified','save-release-before','save-release-after','transact')]==['full-backup-verified','save-release-before','save-release-after','transact']
+ else:
+  assert error
+  if mode in ('preflight-fails','backup-fails'):assert not m.helper.BACKUPS.exists()
+  if mode in ('preflight-fails','backup-fails','save-fails'):assert not any(row[0]=='transact' for row in trace)
+  if mode in ('save-fails','transact-fails'):assert list(m.helper.BACKUPS.glob('*/publication-tool/manifest.json'))
+ print(json.dumps({'ok':True,'trace':trace,'error':error}))
+`;
+
+test('real main check and default mode read the separate business package without backup or transaction', () => {
+  for (const mode of ['check', 'default-check']) assert.equal(invoke(`mode=${JSON.stringify(mode)}\n` + mainFixture).ok, true);
+});
+
+const rootFixture = {skip: typeof process.getuid !== 'function' || process.getuid() !== 0 ? 'POSIX root fixture runs in the protected-source CI step' : false};
+
+test('real main apply uses datetime, creates a private release directory and audits the repaired tool separately from original business sources', rootFixture, () => {
+  assert.equal(invoke("mode='apply'\n" + mainFixture).ok, true);
+});
+
+test('real main failures before publication retain the verified backup and never reach the stop/migrate transaction', rootFixture, () => {
+  for (const mode of ['preflight-fails', 'backup-fails', 'save-fails', 'transact-fails']) {
+    assert.equal(invoke(`mode=${JSON.stringify(mode)}\n` + mainFixture).ok, true);
+  }
+});
+
+test('publication tool audit rejects foreign dependency locations, symbolic links and existing audit directories', {skip: process.platform === 'win32' ? 'POSIX source and directory safety run on Linux CI' : false}, () => {
+  assert.deepEqual(invoke(`import pathlib,tempfile
+with tempfile.TemporaryDirectory() as folder:
+ root=pathlib.Path(folder);backup=root/'backup';backup.mkdir(mode=0o700);original=m.helper.__file__
+ m.helper.__file__=str(root/'private-config.json')
+ try:m.audit_publication_tool(backup)
+ except m.Refused:pass
+ else:raise AssertionError('foreign dependency accepted')
+ assert not (backup/'publication-tool').exists();m.helper.__file__=original
+ target=root/'symlink-tool';target.mkdir()
+ for name in ('apply-mysql-relational.py','apply-approval-workflow.py','apply-leave-types-time.py','apply-organization-fix.py'):
+  (target/name).write_bytes((pathlib.Path(m.__file__).parent/name).read_bytes())
+ spec=importlib.util.spec_from_file_location('symlink_audit_tool',target/'apply-mysql-relational.py');copy=importlib.util.module_from_spec(spec);spec.loader.exec_module(copy)
+ helper=target/'apply-organization-fix.py';helper.unlink();helper.symlink_to(pathlib.Path(original).absolute())
+ try:copy.audit_publication_tool(backup)
+ except copy.Refused:pass
+ else:raise AssertionError('linked dependency accepted')
+ assert not (backup/'publication-tool').exists()
+ (backup/'publication-tool').mkdir();(backup/'publication-tool/KEEP').write_bytes(b'foreign audit')
+ try:m.audit_publication_tool(backup)
+ except m.Refused:pass
+ else:raise AssertionError('existing audit directory overwritten')
+ assert (backup/'publication-tool/KEEP').read_bytes()==b'foreign audit'
+print(json.dumps({'ok':True}))`), {ok: true});
 });
 
 test('relational publisher requires the reviewed manifest hash before host inspection', () => {
