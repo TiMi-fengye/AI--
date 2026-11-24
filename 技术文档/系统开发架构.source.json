@@ -661,7 +661,7 @@
     },
     {
       "name": "AI查询与报表发布",
-      "value": "2026-11-24开发完成，待固定CI与AI_REPORTING_OK。先完成abf244ec固定MySQL关系化迁移；AI发布不改数据库/config，不真实调用模型，随后管理员私下配置并无业务测试。"
+      "value": "固定24021c4b已通过CI45358863527：Linux433项429通过4条件跳过，真实MySQL8专项42项41通过1权限跳过且三个数据库集成实际通过，追加root34项全通过、0跳过；所有任务0失败。候选保留无OTP生产auth，清单8e1a2a79...768bb。待先MYSQL_RELATIONAL_OK再AI_REPORTING_OK；模型待私下配置及真实连接测试。"
     }
   ],
   "deploymentSteps": [
