@@ -105,6 +105,27 @@ for field in ['backupToolSha256','files']:
 print(json.dumps({'ok':True}))`), {ok: true});
 });
 
+test('the AI release requires the duplicate-preserving MySQL baseline while retaining all nine reviewed candidates and the backup core', () => {
+  assert.deepEqual(invoke(`import pathlib,tempfile,json
+root=pathlib.Path(m.__file__).parent.parent
+raw=(root/m.RELATIONAL_MANIFEST).read_bytes()
+assert m.raw_hash(raw)==m.RELATIONAL_SHA256=='14031f871fc1432e43544d844c71bc179e05ce5a9fb049858d28832c4ac52313'
+document=m.load_release(root,m.raw_hash((root/m.MANIFEST).read_bytes()))
+baseline=m.baseline_sources(root,document)
+assert baseline['server/mysql-store.js']==m.rel.SQL_HASHES['mysql-store.js']=='7e639e30ef6db8027ad717e679648dc5d4deb36ebe807c48df894b5a15b001a2'
+assert m.raw_hash(json.dumps(document['files'],ensure_ascii=False,sort_keys=True,separators=(',',':')).encode())=='f44d532f3422b2e8334ecf499ad9496781cb4433e33b8382a708b328dd6588d8'
+assert document['backupToolSha256']=='34cae4644d5d1236db7477d201e065eedd35f964a4668f179998bc0d746faac6'
+for name in ('2026-11-24.md','updates/2026-11-24.md','2026-11-25.md','updates/2026-11-25.md','技术文档/13-MySQL关系化存储与迁移.md'):assert name in m.DOCS
+old=raw.replace(b'7e639e30ef6db8027ad717e679648dc5d4deb36ebe807c48df894b5a15b001a2',b'84e37fc6d87d357bc13f74fd9fa2a985908e8abf361aeae39cd1a8c12e83f845')
+assert m.raw_hash(old)=='83e9e6a03a0599fee90a892bfbabb9b800d529b60d66c8dadfae1013426e6e63'
+with tempfile.TemporaryDirectory() as folder:
+ previous=pathlib.Path(folder);target=previous/m.RELATIONAL_MANIFEST;target.parent.mkdir();target.write_bytes(old)
+ try:m.baseline_sources(previous,document)
+ except m.Refused:pass
+ else:raise AssertionError('old duplicate-rejecting migration baseline accepted')
+print(json.dumps({'ok':True}))`), {ok: true});
+});
+
 test('candidate staging preserves installed authentication, applies exact patches and strips production HR settings from synthetic tests', () => {
   assert.deepEqual(invoke(model + `
 import os

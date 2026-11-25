@@ -55,6 +55,8 @@ function collectFiles() {
   }
   // Explicit public directories only. Never recurse into server/, server/data,
   // node_modules, .git, local configurations, archives, or logs.
+  // Frozen public code for the already-issued historical diagnostic, never data.
+  if (fs.existsSync(safeFile("tests/fixtures/mysql-store-20261123.js"))) found.push("tests/fixtures/mysql-store-20261123.js");
   walk("js", file => file.endsWith(".js"));
   walk("css", file => file.endsWith(".css"));
   walk("tests", file => file.endsWith(".test.js"));

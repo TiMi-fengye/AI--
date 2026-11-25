@@ -37,7 +37,7 @@ FRONTEND = base.FRONTEND
 AUTH, SERVER = base.AUTH, base.SERVER
 SQL_MODULES = ('server/mysql-store.js', 'server/mysql-auth-store.js', 'server/migrate-mysql.js')
 SQL_HASHES = {
-    'mysql-store.js': '84e37fc6d87d357bc13f74fd9fa2a985908e8abf361aeae39cd1a8c12e83f845',
+    'mysql-store.js': '7e639e30ef6db8027ad717e679648dc5d4deb36ebe807c48df894b5a15b001a2',
     'mysql-auth-store.js': '47b4526df2d3fa4d77496ed1e81c9992dc47cbf6748bab422f15c78cb698bf6c',
     'migrate-mysql.js': '73b04b4489c1c17c5a93815dbfe63111ddb7c07e9f67ea25f5f573f8feda71ad'
 }
@@ -155,7 +155,7 @@ UNITS = pathlib.Path('/etc/systemd/system')
 MANAGED = {TOOL: 0o600, WRAPPER: 0o700, UNITS / 'hr-system-backup.service': 0o644, UNITS / 'hr-system-backup.timer': 0o644}
 HOLD = pathlib.Path('/run/hr-system-relational-migration.hold')
 SHA = re.compile(r'[0-9a-f]{64}')
-DOCS = ('README.md', '2026-11-23.md', 'updates/2026-11-23.md', '技术文档/系统开发架构.source.json',
+DOCS = ('README.md', '2026-11-23.md', 'updates/2026-11-23.md', '2026-11-25.md', 'updates/2026-11-25.md', '技术文档/系统开发架构.source.json',
         '技术文档/13-MySQL关系化存储与迁移.md', '技术文档/05-阿里云部署手册.md',
         '技术文档/07-手机号账号与数据权限.md', '技术文档/11-每日备份与恢复.md',
         'deploy/approval-sms.env.example', 'server/config.example.json', MANIFEST, BACKUP_SOURCE,

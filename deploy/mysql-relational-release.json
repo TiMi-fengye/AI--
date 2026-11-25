@@ -139,7 +139,7 @@
         },
         "server/mysql-store.js": {
           "beforeSha256": null,
-          "afterSha256": "84e37fc6d87d357bc13f74fd9fa2a985908e8abf361aeae39cd1a8c12e83f845"
+          "afterSha256": "7e639e30ef6db8027ad717e679648dc5d4deb36ebe807c48df894b5a15b001a2"
         },
         "server/mysql-auth-store.js": {
           "beforeSha256": null,
@@ -288,7 +288,7 @@
         },
         "server/mysql-store.js": {
           "beforeSha256": null,
-          "afterSha256": "84e37fc6d87d357bc13f74fd9fa2a985908e8abf361aeae39cd1a8c12e83f845"
+          "afterSha256": "7e639e30ef6db8027ad717e679648dc5d4deb36ebe807c48df894b5a15b001a2"
         },
         "server/mysql-auth-store.js": {
           "beforeSha256": null,

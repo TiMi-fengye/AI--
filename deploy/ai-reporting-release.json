@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "relationalBaselineSha256": "83e9e6a03a0599fee90a892bfbabb9b800d529b60d66c8dadfae1013426e6e63",
+  "relationalBaselineSha256": "14031f871fc1432e43544d844c71bc179e05ce5a9fb049858d28832c4ac52313",
   "backupToolSha256": "34cae4644d5d1236db7477d201e065eedd35f964a4668f179998bc0d746faac6",
   "files": {
     "server/auth-service.js": {

@@ -3,6 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const {spawnSync} = require("node:child_process");
 const python = process.platform === "win32" ? "python" : "python3";
 const script = path.resolve(__dirname, "../deploy/diagnose-mysql-relational.py");
@@ -23,6 +24,9 @@ const unit = {exports:{}};
 new Function("require","module","exports",source)(require,unit,unit.exports);
 const {diagnose,safeFailure,SQL} = unit.exports;
 const modules = Object.fromEntries(["mysql-store.js","mysql-auth-store.js","migrate-mysql.js"].map(name=>[name,fs.readFileSync(path.resolve(__dirname,"../server",name),"utf8")]));
+const originalStore = fs.readFileSync(path.resolve(__dirname,"fixtures/mysql-store-20261123.js"));
+assert.equal(crypto.createHash("sha256").update(originalStore).digest("hex"),"84e37fc6d87d357bc13f74fd9fa2a985908e8abf361aeae39cd1a8c12e83f845");
+modules["mysql-store.js"] = originalStore.toString("utf8");
 const poison = "SYNTHETIC_PRIVATE_VALUE_sql_password_phone";
 async function fixture(options={},action) {
   const parent=path.resolve(__dirname,"../.delivery/relational-diagnostics-test-tmp");fs.mkdirSync(parent,{recursive:true});

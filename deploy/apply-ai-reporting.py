@@ -39,9 +39,10 @@ PRESERVE_FILES = frozenset((AUTH,))
 TEST_DEPENDENCIES = ('server/approval-workflow.js', 'server/approval-notifications.js')
 MANIFEST = 'deploy/ai-reporting-release.json'
 RELATIONAL_MANIFEST = 'deploy/mysql-relational-release.json'
-RELATIONAL_SHA256 = '83e9e6a03a0599fee90a892bfbabb9b800d529b60d66c8dadfae1013426e6e63'
+RELATIONAL_SHA256 = '14031f871fc1432e43544d844c71bc179e05ce5a9fb049858d28832c4ac52313'
 TESTS = ('tests/ai-reporting.test.js', 'tests/ai-provider.test.js', 'tests/ai-service.test.js')
 DOCS = ('README.md', '2026-11-24.md', 'updates/2026-11-24.md', '技术文档/系统开发架构.source.json',
+        '2026-11-25.md', 'updates/2026-11-25.md', '技术文档/13-MySQL关系化存储与迁移.md',
         '技术文档/14-AI查询与周期报表.md', '技术文档/05-阿里云部署手册.md', 'server/config.example.json',
         MANIFEST, RELATIONAL_MANIFEST, 'deploy/apply-ai-reporting.py')
 ANONYMOUS_APIS = (('GET', '/api/ai/settings'), ('POST', '/api/ai/settings'),

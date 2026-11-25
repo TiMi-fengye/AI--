@@ -1,6 +1,6 @@
 "use strict";
 const test = require("node:test"), assert = require("node:assert/strict"), crypto = require("node:crypto"), path = require("node:path");
-const { createMySQLStore, TABLES } = require("../server/mysql-store");
+const { createMySQLStore, TABLES, encodeBundle } = require("../server/mysql-store");
 const required = process.env.HR_REQUIRE_MYSQL_TESTS === "true";
 const configured = !!process.env.HR_TEST_MYSQL_URL;
 
@@ -20,7 +20,10 @@ test("real MySQL relational migration, SQL-column authority, sparse preservation
     const source = { revision: 7, employees: [{ id: 1, employeeNo: "00001", name: "合成人员", phone: "13800000001", region: "华北", resumeData: "data:text/plain;base64," + Buffer.from("synthetic attachment").toString("base64"), legacy: { preserve: true } }], attendance: [{ id: 6, employeeId: 99, date: "2026-01-01" }], overtime: [{ id: 8, employeeId: 1, date: "2026-11-23", hours: 2, status: "approved", approvalHistory: [{ stage: "leader", decision: "approved" }] }], leaveRequests: [{ id: 8, employeeId: 1, startDate: "2026-11-23T09:05", endDate: "2026-11-23T10:35", hours: "1.50", days: 1, approvalHistory: [{ stage: "regional", decision: "approved" }] }], departments: ["null", "123", "{\"keep\":true}", "设施", "设施"], settlements: [{ id: 4, records: [{ employeeId: 1, otPay: 25.5, arbitrary: false }] }], performance: [{ id: 3, employeeId: 1, scores: { quality: 95.5, operations: "08.00" }, total: 103.5 }], updateLogs: [], orgStructure: { id: 1, name: "组织", children: [{ id: 2, name: "部门", children: [] }] }, approvalOutbox: [{ id: "synthetic-event", payload: { employee: "合成人员", hours: "1.5" }, deliveries: { syntheticManager: { status: "uncertain" } } }] };
     source.employees.push({ id: 2, name: null }, { id: 3 });
     source.leaveRequests.push({ id: 9, employeeId: 1, hours: "0.00" });
-    source.updateLogs.push({ id: 2, late: false });
+    source.updateLogs.push({ id: 2, late: false }, { id: 500, action: "first" }, { id: 500, action: "second" }, { id: "500", action: "typed text" });
+    source.overtime.push({ id: 88, employeeId: 1, hours: "01.00", approvalHistory: [{ id: 7, stage: "leader" }, { id: 7, stage: "regional" }] }, { id: 88, employeeId: 99, hours: 2, approvalHistory: [{ id: 7, decision: "rejected" }] });
+    source.leaveRequests.push({ id: 89, employeeId: 1, hours: 1, approvalHistory: [{ stage: "leader" }] }, { id: 89, employeeId: 1, hours: "2.00", approvalHistory: [{ stage: "regional" }] });
+    source.settlements.push({ id: 4, records: [{ id: 1, employeeId: 1, otPay: "01.00" }, { id: 1, employeeId: 1, otPay: 2 }] });
     await store.migrateFromLegacy(source); assert.deepEqual(await store.read(), source);
     const [tables] = await pool.query("SHOW TABLES"); assert.equal(tables.length, TABLES.length); assert.ok(!tables.some(row => Object.values(row).includes("system_snapshots")));
     await pool.query("UPDATE `hr_employees` SET `v_name` = ? WHERE `v_id` = ?", ["SQL列修改", "1"]);
@@ -35,7 +38,18 @@ test("real MySQL relational migration, SQL-column authority, sparse preservation
     const first = structuredClone(current), second = structuredClone(current); first.revision++; second.revision++; first.employees[0].email = "synthetic@example.com"; second.employees[0].email = "stale@example.com";
     const concurrent = await Promise.allSettled([store.write(first), createMySQLStore(pool).write(second)]);
     assert.equal(concurrent.filter(row => row.status === "fulfilled").length, 1); assert.equal(concurrent.find(row => row.status === "rejected").reason.status, 409);
-    current = await store.read(); const before = structuredClone(current);
+    current = await store.read();
+    const reordered = structuredClone(current); reordered.revision++;
+    reordered.updateLogs.reverse(); reordered.settlements.reverse();
+    reordered.overtime.splice(reordered.overtime.findIndex(row => row.id === 88), 1);
+    reordered.leaveRequests.reverse(); reordered.leaveRequests.splice(reordered.leaveRequests.findIndex(row => row.id === 89), 1);
+    await store.write(reordered); assert.deepEqual(await store.read(), reordered);
+    const expected = encodeBundle(reordered);
+    for (const table of ["hr_approval_history", "hr_settlement_records"]) {
+      const [[row]] = await pool.query("SELECT COUNT(*) AS count FROM `" + table + "`");
+      assert.equal(Number(row.count), expected.tables[table].length, "deleted duplicate children do not remain in " + table);
+    }
+    const before = structuredClone(reordered);
     await assert.rejects(store.transaction(async () => { const next = await store.read(); next.revision++; next.employees[0].name = "rolled back"; await store.write(next); throw new Error("synthetic account failure"); }), /synthetic account failure/);
     assert.deepEqual(await store.read(), before);
     await assert.rejects(store.migrateFromLegacy(source), error => error.status === 409);

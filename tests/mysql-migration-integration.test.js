@@ -36,6 +36,10 @@ test("real MySQL migration keeps every entity, identity and attachment atomic, r
     approvalOutbox: [{ id: "synthetic-notice", kind: "leaveRequests", recordId: 4, employeeId: 1, region: "合成区域", status: "blocked", reason: "sms_not_configured", attempts: 0, payload: { employee: "合成甲🦄", type: "调休请假", start: "2026-11-23T09:05", end: "2026-11-23T10:35", hours: "1.5" }, deliveries: { synthetic_manager: { status: "blocked", reason: "manager_phone_missing" } } }],
     customMetadata: { key: "synthetic-only" }
   };
+  business.updateLogs.push({ id: "log1", building: "合成楼栋", date: "2026-11-23", late: true, legacyOccurrence: 2 }, { id: 500, action: "number" }, { id: "500", action: "text" }, { id: 500, action: "number again" });
+  business.overtime.push({ id: 3, employeeId: 1, hours: 1, approvalHistory: [{ id: 7, stage: "leader", decision: "rejected" }, { id: 7, stage: "regional", decision: "approved" }] });
+  business.leaveRequests.push({ id: 4, employeeId: 1, type: "statutoryAnnual", startDate: "2026-11-23T11:05", endDate: "2026-11-23T12:35", days: 1, approvalHistory: [{ stage: "leader" }] });
+  business.settlements.push({ id: "synthetic-period", records: [{ id: 1, employeeId: 1, otPay: "01.00" }, { id: 1, employeeId: 1, otPay: 2 }] });
   const privateState = { users: { synthetic_admin: { name: "合成管理员", role: "admin", passwordHash: "SYNTHETIC_HASH", passwordSalt: "SYNTHETIC_SALT", regions: [], buildings: [] }, synthetic_manager: { name: "合成经理", role: "region_manager", phone: "13800000002", regions: ["合成区域"], buildings: [] } }, organization: { schemaVersion: 1, revision: 3, options: { buildings: ["合成楼栋"], regions: ["合成区域"], departments: [] }, buildingLeaders: [{ building: "合成楼栋", leaders: "旧合成条目" }] }, verifyUnchanged() {} };
   const source = JSON.stringify(business);
   try {
@@ -69,7 +73,9 @@ test("real MySQL migration keeps every entity, identity and attachment atomic, r
     assert.deepEqual(await identity.readOrganization(), privateState.organization);
     const [[frozen]] = await pool.query("SELECT payload FROM system_snapshots WHERE snapshot_key='default'"); assert.equal(frozen.payload, source);
     const next = await store.read(); next.revision++; next.employees[0].name = "合成迁移后新业务";
+    next.updateLogs.reverse(); next.overtime.reverse(); next.leaveRequests.splice(0, 1); next.settlements.reverse();
     await store.write(next, { expectedRevision: 18 });
+    assert.deepEqual(await store.read(), next, "duplicate IDs, child rows and order survive post-migration writes");
     const updatedProof = await verify(params); assert.notEqual(updatedProof.tablesSha256, done.tablesSha256); assert.notEqual(updatedProof.contentSha256, done.contentSha256);
     const rerun = await migrate({ ...params, apply: true }); assert.equal(rerun.applied, false); assert.equal(rerun.status, "MYSQL_RELATIONAL_ALREADY_INITIALIZED"); assert.deepEqual(await store.read(), next);
     const changedSource = { ...business, revision: 19 }; await pool.query("UPDATE system_snapshots SET payload=? WHERE snapshot_key='default'", [JSON.stringify(changedSource)]);
@@ -110,7 +116,7 @@ test("the publisher Node wrapper runs the original CLI on actual MySQL, preserve
     // This shim models only the CLI's read-only stopped-service precondition.
     // No real systemctl, backend server, cloud service or production data is used.
     fs.writeFileSync(path.join(bin, "systemctl"), '#!/bin/sh\nif [ "$1" = show ] && [ "$2" = hr-system.service ] && [ "$3" = -p ] && [ "$4" = ActiveState ] && [ "$5" = --value ]; then printf "inactive\\n"; else exit 93; fi\n', { mode: 0o700 });
-    const business = { revision: 9, employees: [{ id: 1, name: "合成包装器人员🦄", employeeNo: "00009", resumeData: "data:text/plain;base64,c3ludGhldGlj" }], attendance: [], overtime: [{ id: 2, employeeId: 1, hours: "02.50", status: "approved" }], leaveRequests: [], departments: ["合成部门", '{"string":"preserved"}'] };
+    const business = { revision: 9, employees: [{ id: 1, name: "合成包装器人员🦄", employeeNo: "00009", resumeData: "data:text/plain;base64,c3ludGhldGlj" }], attendance: [], overtime: [{ id: 2, employeeId: 1, hours: "02.50", status: "approved", approvalHistory: [{ stage: "leader" }] }, { id: 2, employeeId: 1, hours: 1, approvalHistory: [{ stage: "regional" }] }], leaveRequests: [], departments: ["合成部门", '{"string":"preserved"}'], updateLogs: [{ id: 500, action: "first" }, { id: 500, action: "second" }, { id: "500", action: "typed text" }] };
     await bootstrap.query("CREATE DATABASE `" + database + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin");
     pool = mysql.createPool({ ...options, database });
     await pool.query("CREATE TABLE system_snapshots (snapshot_key VARCHAR(64) NOT NULL PRIMARY KEY,payload LONGTEXT NOT NULL,updated_at DATETIME(3) NOT NULL) ENGINE=InnoDB CHARACTER SET utf8mb4");

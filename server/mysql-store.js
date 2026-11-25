@@ -136,8 +136,15 @@ function encodeBundle(input) {
     let kind = "value";
     if (COLLECTIONS.includes(key)) {
       kind = "collection";
-      const keys = new Set();
-      value.forEach((record, ordinal) => { const rowKey = entityKey(record, ordinal); requireValue(!keys.has(rowKey), 400, "同一集合记录编号重复"); keys.add(rowKey); add(key, record, rowKey, ordinal); });
+      const occurrences = new Map();
+      value.forEach((record, ordinal) => {
+        const baseKey = entityKey(record, ordinal), occurrence = occurrences.get(baseKey) || 0;
+        occurrences.set(baseKey, occurrence + 1);
+        // Historical timestamp IDs can repeat. Keep their values and order;
+        // only the internal key gains an occurrence namespace after the first.
+        const rowKey = occurrence ? hash("duplicate:" + baseKey + ":" + occurrence) : baseKey;
+        add(key, record, rowKey, ordinal);
+      });
     } else if (key === "orgStructure") { kind = "organization"; add("organizationNodes", value, hash("organization-root"), 0); }
     add("properties", { name: key, kind, ...(kind === "value" ? { value } : {}) }, hash("property:" + key), tables.hr_sync_properties.length);
   }

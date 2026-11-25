@@ -4,7 +4,7 @@
   "systemName": "人力资源管理系统",
   "organization": "华北一部 · 酒仙桥",
   "subtitle": "开发架构、技术栈与部署说明",
-  "businessBaseline": "2026-11-23已实现24表MySQL关系化、整包同步兼容、共享事务及显式迁移，待本次MYSQL_RELATIONAL_OK；合并同日两级审批。现网已验收的每日02:00备份与root保护保持，工具新表适配待发布。短信真实服务/GitHub强制保护/异地备份仍待配置；2026-11-24新增授权AI事实查询及月季年报、私有模型配置，待AI_REPORTING_OK及真实模型连接测试。 2026-11-25只读回执确认24表及schemaVersion=1，但initialized=false，原预检ready；迁移未完成，发布工具补充受限阶段诊断，保持原业务清单与迁移流程。",
+  "businessBaseline": "2026-11-23已实现24表MySQL关系化、整包同步兼容、共享事务及显式迁移，待本次MYSQL_RELATIONAL_OK；合并同日两级审批。现网已验收的每日02:00备份与root保护保持，工具新表适配待发布。短信真实服务/GitHub强制保护/异地备份仍待配置；2026-11-24新增授权AI事实查询及月季年报、私有模型配置，待AI_REPORTING_OK及真实模型连接测试。2026-11-25只读回执确认24表及schemaVersion=1、initialized=false；随后d34诊断在business-encode确认重复编号，未写数据库或重启。最新修复为同编号按出现次序区分内部行键，保留原id、顺序、字段和子关联，不改DDL、业务权限或唯一性规则；新迁移专用固定源/清单及AI基线适配待验证发布，旧83e9迁移命令不再直接用于本次修复。",
   "introduction": "面向人员与运营团队的轻量级管理系统。围绕人员档案，连接组织、考勤、加班、请假、调休小时数与费用管理，并在服务端按管理员、楼长和普通人员限制数据范围。",
   "architecture": [
     {
@@ -242,7 +242,7 @@
         "server/mysql-auth-store.js",
         "server/migrate-mysql.js"
       ],
-      "description": "按权限整包传输兼容接口，正式MySQL24表；姓名/时长/状态等实际列，审批历史/通知/结算明细独立子表。事务内逐行diff、CAS多实例冲突校验，账号/业务原子维护。启动只verify不DDL、不读写旧JSON或单行快照；显式file仅开发。已开发待本次定向迁移。",
+      "description": "按权限整包传输兼容接口，正式MySQL24表；姓名/时长/状态等实际列，审批历史/通知/结算明细独立子表。事务内逐行diff、CAS多实例冲突校验，账号/业务原子维护。重复编号修复以集合内出现次序区分内部行键，保留原编号、字段、顺序和子关联；不放宽业务唯一性或权限。启动只verify不DDL、不读写旧JSON或单行快照；显式file仅开发。已开发待本次定向迁移。",
       "scope": "服务端强制校验"
     },
     {
@@ -392,7 +392,7 @@
     {
       "name": "业务关系表（开发完成，待迁移）",
       "location": "MySQL · hr_employees / hr_attendance / hr_overtime / hr_leave_requests 等17表",
-      "description": "正式列保存已知业务字段，子表保存审批历史、结算明细、绩效维度、组织树和通知。原内部ID、稀疏字段/类型、附件及数组顺序核对保留；extras只兼容未知字段，没有业务全集payload。保存事务内逐行变更，元数据仅schema/revision/迁移摘要；原接口名仅整包传输兼容。",
+      "description": "正式列保存已知业务字段，子表保存审批历史、结算明细、绩效维度、组织树和通知。原业务ID、稀疏字段/类型、附件及数组顺序核对保留；同编号记录使用独立内部行键，首条沿用旧键，后续按同类型编号的出现次序区分，子表按父行键关联。extras只兼容未知字段，没有业务全集payload。保存事务内逐行变更，元数据仅schema/revision/迁移摘要；原接口名仅整包传输兼容。",
       "backup": "已启用的02:00全库事务转储保持；本次工具新增24表及完整标记校验，迁移前后均需生成并verify完整备份。"
     },
     {
@@ -666,6 +666,10 @@
     {
       "name": "迁移发布入口修复",
       "value": "固定修复工具e04018db已通过CI45399810036：Linux437项431通过6条件跳过，真实MySQL8专项46项43通过3权限跳过且三个数据库集成实际通过，实际root38项全通过0跳过；所有任务0失败。main --apply实际执行了datetime目录创建、审计及失败停止。工具SHA d38eab36...e241d，原abf业务包/83e9清单不变，新双包命令已提供，待MYSQL_RELATIONAL_OK，随后单独AI发布及DeepSeek私下配置实测。"
+    },
+    {
+      "name": "重复编号迁移修复状态",
+      "value": "2026-11-25固定d34只读诊断已定位business-encode重复编号，databaseWritten=false、serviceRestarted=false；不知道具体集合或产生原因。新修复保留原编号/字段/顺序，仅区分内部行键；新迁移源码、清单与AI基线适配的固定版本及合成/Linux/真实MySQL/root验证结果待补，生产MYSQL_RELATIONAL_OK、AI_REPORTING_OK及DeepSeek连接仍待验收。旧83e9迁移和24021 AI命令不直接用于新修复版本。"
     }
   ],
   "deploymentSteps": [
