@@ -63,4 +63,4 @@ jobs:
           HR_NO_OPEN: '1'
         run: node --test tests/mysql*.test.js
       - name: Verify protected source installation and rollback with temporary root fixtures
-        run: sudo "$(command -v node)" --test tests/mysql-migration.test.js tests/mysql-relational-deployment.test.js tests/mysql-relational-diagnostics.test.js tests/ai-reporting-deployment.test.js
+        run: sudo "$(command -v node)" --test tests/mysql-migration.test.js tests/mysql-relational-deployment.test.js tests/mysql-relational-diagnostics.test.js tests/ai-reporting-deployment.test.js tests/ai-configuration.test.js
