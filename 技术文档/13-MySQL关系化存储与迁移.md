@@ -80,3 +80,5 @@ MySQL的建表语句会隐式提交，因此不能声称“建表也全部回滚
 固定诊断/工具版本[`7385b3d0265c9fb1827ee96ed5c3d4221555ebb0`](https://github.com/TiMi-fengye/AI--/commit/7385b3d0265c9fb1827ee96ed5c3d4221555ebb0)已通过[CI 45549448309](https://github.com/TiMi-fengye/AI--/actions/runs/45549448309)。Linux完整452项445通过7条件跳过；真实MySQL8专项61项58通过3权限条件跳过；实际root41项全通过0跳过，全部0失败。新受控入口的实际MySQL检查确实执行了原CLI、账号字段失败后的事务回滚、修改合成输入后重新迁移及24表proof。下一步优先从此固定包运行只读诊断，针对已确认的原发布归档，不在未知原因下重跑正式迁移。本段验收文档仅补记结果，固定工具和原83e9业务源不变。
 
 所有者随后执行上述诊断返回`helper-audit`停止，尚未读取业务源。实际GitHub codeload tar的目录为0775、普通文件0664，root解压保留了组写权限，被严格检查正确拒绝；此前测试遗漏真实tar解压权限。修复仅将helper来源改为同一发布归档已受保护的publication-tool副本，继续原C69E摘要和路径/权限检查，不放宽保护。新增真实root tar权限回归，CI root专项实际执行该测试。旧7385诊断命令不再重复运行；修复固定版本及验证结果以今日最新记录为准，原业务源及83e9清单保持。
+
+替换诊断固定版本[`d34ac4ae73b9db83334e489162c3c7baca0aac5e`](https://github.com/TiMi-fengye/AI--/commit/d34ac4ae73b9db83334e489162c3c7baca0aac5e)通过[CI 45551988601](https://github.com/TiMi-fengye/AI--/actions/runs/45551988601)：Linux454项446通过8条件跳过、真实MySQL63项59通过4权限条件跳过、实际root54项全通过0跳过。root日志确认上述真实tar及私有helper加载/拒绝测试已运行；原wrapper实际MySQL测试仍通过。生产仍先执行此固定版只读诊断，尚未收到兼容性结果或MYSQL_RELATIONAL_OK，不以CI成功代替生产迁移验收。
