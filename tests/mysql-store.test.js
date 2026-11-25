@@ -17,6 +17,16 @@ function fixture() {
   approvalOutbox: [{ id: "notice-a", kind: "leaveRequests", recordId: 1, employeeId: 2, region: "华北", status: "uncertain", reason: "delivery_unknown", attempts: 1, payload: { employee: "合成人员甲", type: "调休请假", start: "2026-11-23T09:05", end: "2026-11-23T10:35", hours: "1.5" }, deliveries: { "合成经理": { status: "uncertain", reason: "delivery_unknown" } } }],
   exportedAt: "2026-11-23T01:00:00Z", customRoot: { compatibility: true } };
 }
+function duplicateFixture() {
+  const source = fixture();
+  source.updateLogs.push({ ...source.updateLogs[0], changes: ["building"], legacyMarker: "second" }, { ...source.updateLogs[0], changes: [], legacyMarker: "third" });
+  source.overtime.push({ ...structuredClone(source.overtime[0]), hours: "03.00", approvalHistory: [{ id: 7, stage: "leader", decision: "rejected" }, { id: 7, stage: "regional", decision: "approved" }] });
+  source.leaveRequests.push({ ...structuredClone(source.leaveRequests[0]), reason: "duplicate request retained", approvalHistory: [{ id: 7, stage: "regional" }] });
+  source.settlements.push({ id: 10, records: [{ id: 7, employeeId: 2, otPay: 1 }, { id: 7, employeeId: 2, otPay: 2 }] });
+  source.performance.push({ id: 3, employeeId: 2, scores: { "运维质量": 3, "工单": "04.00" } });
+  source.approvalOutbox.push({ ...structuredClone(source.approvalOutbox[0]), payload: { employee: "second", hours: "2.0" }, deliveries: { "合成经理": { status: "pending" } } });
+  return source;
+}
 function fakePool() {
   const pool = { state: { meta: null, tables: Object.fromEntries(TABLES.slice(1).map(table => [table, []])) }, trace: [], afterMutation: null, failTable: null };
   let tail = Promise.resolve();
@@ -102,9 +112,51 @@ test("direct SQL values override null or missing metadata while SQL NULL stays n
   assert.equal(result.overtime[0].hours, null);
 });
 
-test("malformed values, duplicate typed IDs and cyclic data fail before any database write", () => {
-  for (const change of [bundle => bundle.employees.push(bundle.employees[0]), bundle => { bundle.employees[0].hours = Infinity; }, bundle => { bundle.employees = {}; }, bundle => { bundle.self = bundle; }]) { const input = fixture(); change(input); assert.throws(() => encodeBundle(input)); }
+test("malformed values and cyclic data fail before any database write", () => {
+  for (const change of [bundle => { bundle.employees[0].hours = Infinity; }, bundle => { bundle.employees = {}; }, bundle => { bundle.self = bundle; }]) { const input = fixture(); change(input); assert.throws(() => encodeBundle(input)); }
   const input = fixture(); input.departments.push(null, true, 123, ["nested", 1]); assert.deepEqual(decodeBundle(encodeBundle(input).tables, input.revision), input);
+});
+
+test("repeated typed IDs retain every record and occurrence while unique and first-occurrence keys keep their existing values", () => {
+  const source = { revision: 1, employees: [{ id: 1 }, { id: "1" }, { name: "without id" }] };
+  const previous = ["b824aa9f0adf7e5566e10d86dff0cb8babe4f754ac92f43a4ba1b53f888fb24d", "f2bc160e4e524503f770fe582cea41176af55300a38f3ef378f2d53897060595", "97f0015454e0f3b9758cdfd6b3e773bbf67fb8de2d8d0975316cb3f1678633df"];
+  assert.deepEqual(encodeBundle(source).tables.hr_employees.map(row => row.row_key), previous);
+  source.employees.push({ id: 1, name: "numeric second" }, { id: "1", name: "text second" }, { id: true }, { id: "true" }, { id: true }, { id: null }, { id: "null" }, { id: null }, { id: [1] }, { id: [1] });
+  const before = structuredClone(source), encoded = encodeBundle(source), rows = encoded.tables.hr_employees;
+  assert.deepEqual(decodeBundle(encoded.tables, encoded.revision), before); assert.deepEqual(source, before);
+  assert.deepEqual(rows.slice(0, 3).map(row => row.row_key), previous);
+  assert.equal(new Set(rows.map(row => row.row_key)).size, rows.length);
+  assert.deepEqual(rows.map(row => row.ordinal), rows.map((_, index) => index));
+  assert.deepEqual(encodeBundle(decodeBundle(encoded.tables, encoded.revision)), encoded);
+});
+
+test("duplicate logs, requests and settlements keep separate histories, child records, score maps and delivery rows", () => {
+  const source = duplicateFixture(), encoded = encodeBundle(source);
+  assert.deepEqual(decodeBundle(encoded.tables, encoded.revision), source);
+  for (const rows of Object.values(encoded.tables)) assert.equal(new Set(rows.map(row => row.row_key)).size, rows.length);
+  assert.equal(encoded.tables.hr_approval_history.length, 6);
+  assert.equal(encoded.tables.hr_settlement_records.length, 3);
+  assert.equal(encoded.tables.hr_performance_scores.length, 4);
+  assert.equal(encoded.tables.hr_notification_deliveries.length, 2);
+  assert.equal(encoded.tables.hr_notification_parameters.length, 2);
+  assert.deepEqual(encodeBundle(decodeBundle(encoded.tables, encoded.revision)), encoded);
+});
+
+test("duplicate occurrence rows migrate and roundtrip after reordering, edits and deletion without orphaning their children", async () => {
+  const pool = fakePool(), store = createMySQLStore(pool), source = duplicateFixture();
+  await store.migrateFromLegacy(source); assert.deepEqual(await store.read(), source);
+  const reordered = await store.read(); reordered.revision++;
+  for (const key of ["updateLogs", "overtime", "leaveRequests", "settlements", "performance", "approvalOutbox"]) reordered[key].reverse();
+  reordered.overtime[0].approvalHistory[0].decision = "approved";
+  await store.write(reordered); assert.deepEqual(await store.read(), reordered);
+  const removed = await store.read(); removed.revision++;
+  for (const key of ["updateLogs", "overtime", "leaveRequests", "settlements", "performance", "approvalOutbox"]) removed[key].splice(0, 1);
+  await store.write(removed); assert.deepEqual(await store.read(), removed);
+  const encoded = encodeBundle(removed);
+  for (const table of TABLES.slice(1)) {
+    const order = rows => rows.slice().sort((a, b) => a.row_key.localeCompare(b.row_key));
+    assert.deepEqual(order(pool.state.tables[table]), order(encoded.tables[table]), "no stale duplicate or child row remains in " + table);
+  }
 });
 
 test("migration stages in an explicit transaction and verifies round-trip before setting initialized", async () => {

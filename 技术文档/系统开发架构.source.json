@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-23",
+  "updatedAt": "2026-11-25",
   "systemName": "人力资源管理系统",
   "organization": "华北一部 · 酒仙桥",
   "subtitle": "开发架构、技术栈与部署说明",
-  "businessBaseline": "2026-11-23已实现24表MySQL关系化、整包同步兼容、共享事务及显式迁移，待本次MYSQL_RELATIONAL_OK；合并同日两级审批。现网已验收的每日02:00备份与root保护保持，工具新表适配待发布。短信真实服务/GitHub强制保护/异地备份仍待配置",
+  "businessBaseline": "2026-11-23已实现24表MySQL关系化、整包同步兼容、共享事务及显式迁移，待本次MYSQL_RELATIONAL_OK；合并同日两级审批。现网已验收的每日02:00备份与root保护保持，工具新表适配待发布。短信真实服务/GitHub强制保护/异地备份仍待配置 2026-11-25生产只读诊断确认business-encode因集合编号重复停止；本迁移专用源码改为内部typed-ID出现序号键，原id/顺序/字段/子关联保持，其他13份候选和备份core不变。仍待新MYSQL_RELATIONAL_OK，不包含待发布AI变更。",
   "introduction": "面向人员与运营团队的轻量级管理系统。围绕人员档案，连接组织、考勤、加班、请假、调休小时数与费用管理，并在服务端按管理员、楼长和普通人员限制数据范围。",
   "architecture": [
     {
