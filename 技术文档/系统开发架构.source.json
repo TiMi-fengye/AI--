@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-11-24",
+  "updatedAt": "2026-11-25",
   "systemName": "人力资源管理系统",
   "organization": "华北一部 · 酒仙桥",
   "subtitle": "开发架构、技术栈与部署说明",
-  "businessBaseline": "2026-11-23已实现24表MySQL关系化、整包同步兼容、共享事务及显式迁移，待本次MYSQL_RELATIONAL_OK；合并同日两级审批。现网已验收的每日02:00备份与root保护保持，工具新表适配待发布。短信真实服务/GitHub强制保护/异地备份仍待配置；2026-11-24新增授权AI事实查询及月季年报、私有模型配置，待AI_REPORTING_OK及真实模型连接测试。",
+  "businessBaseline": "2026-11-23已实现24表MySQL关系化、整包同步兼容、共享事务及显式迁移，待本次MYSQL_RELATIONAL_OK；合并同日两级审批。现网已验收的每日02:00备份与root保护保持，工具新表适配待发布。短信真实服务/GitHub强制保护/异地备份仍待配置；2026-11-24新增授权AI事实查询及月季年报、私有模型配置，待AI_REPORTING_OK及真实模型连接测试。 2026-11-25只读回执确认24表及schemaVersion=1，但initialized=false，原预检ready；迁移未完成，发布工具补充受限阶段诊断，保持原业务清单与迁移流程。",
   "introduction": "面向人员与运营团队的轻量级管理系统。围绕人员档案，连接组织、考勤、加班、请假、调休小时数与费用管理，并在服务端按管理员、楼长和普通人员限制数据范围。",
   "architecture": [
     {
@@ -922,7 +922,11 @@
     },
     {
       "path": "deploy/apply-mysql-relational.py",
-      "description": "双生产基线、源码保护、备份工具适配及切换提交点"
+      "description": "双生产基线、源码保护、备份工具适配、切换提交点及受限迁移阶段诊断"
+    },
+    {
+      "path": "deploy/diagnose-mysql-relational.py",
+      "description": "原审阅模块的只读业务编码还原及纯内存身份兼容性检查，不写SQL或重启"
     },
     {
       "path": "deploy/mysql-relational-release.json",

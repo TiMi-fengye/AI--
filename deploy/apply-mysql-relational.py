@@ -18,6 +18,7 @@ import re
 import secrets
 import signal
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -35,6 +36,112 @@ APP, SERVICE, OWNER, HTML = base.APP, base.SERVICE, base.OWNER, base.HTML
 FRONTEND = base.FRONTEND
 AUTH, SERVER = base.AUTH, base.SERVER
 SQL_MODULES = ('server/mysql-store.js', 'server/mysql-auth-store.js', 'server/migrate-mysql.js')
+SQL_HASHES = {
+    'mysql-store.js': '84e37fc6d87d357bc13f74fd9fa2a985908e8abf361aeae39cd1a8c12e83f845',
+    'mysql-auth-store.js': '47b4526df2d3fa4d77496ed1e81c9992dc47cbf6748bab422f15c78cb698bf6c',
+    'migrate-mysql.js': '73b04b4489c1c17c5a93815dbfe63111ddb7c07e9f67ea25f5f573f8feda71ad'
+}
+DIAGNOSTIC_STAGES = frozenset(('cli', 'module-audit', 'database.connect', 'database.query', 'database.beginTransaction',
+    'database.commit', 'database.rollback', 'database.close',
+    *(f'business.{name}' for name in ('createSchema', 'assertTargetEmpty', 'stageLegacyBundle', 'verifyBundle', 'completeMigration', 'verifyInitialized', 'read')),
+    *(f'identity.{name}' for name in ('createSchema', 'stageLegacy', 'verifyLegacy', 'verifyInitialized', 'readUsers', 'readOrganization'))))
+DIAGNOSTIC_NAMES = frozenset(('Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError', 'StorageError', 'MigrationError', 'HIDDEN'))
+DIAGNOSTIC_PREFIX = 'HR_MYSQL_FAILURE '
+NODE_MIGRATION_WRAPPER = r'''"use strict";
+const fs = require("node:fs"), path = require("node:path"), crypto = require("node:crypto");
+const { createRequire } = require("node:module");
+const expected = __SQL_HASHES__;
+const filename = path.resolve(process.argv[1]);
+const args = process.argv.slice(2), mode = args.at(-1);
+const source = {}, cache = new Map(), messages = new Set(["HIDDEN"]);
+const errors = new WeakMap(), connections = new WeakSet(), stack = [];
+const names = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "ReferenceError", "StorageError", "MigrationError"]);
+let fallback = "module-audit";
+function phase() { return [...stack].reverse().find(item => item !== "cli" && !item.startsWith("database.")) || stack.at(-1) || fallback; }
+function remember(error) { if (error && (typeof error === "object" || typeof error === "function") && !errors.has(error)) errors.set(error, phase()); }
+async function tracked(label, action) {
+  stack.push(label);
+  try { return await action(); } catch (error) { remember(error); throw error; } finally { stack.pop(); }
+}
+function wrap(object, key, label) {
+  const original = object[key];
+  if (typeof original !== "function") throw new Error("Unrecognized reviewed migration method");
+  object[key] = async function (...values) { return tracked(label, () => original.apply(this, values)); };
+}
+function business(store) {
+  for (const key of ["createSchema", "assertTargetEmpty", "stageLegacyBundle", "verifyBundle", "completeMigration", "verifyInitialized", "read"]) wrap(store, key, "business." + key);
+  // connection() remains synchronous: identity.active() relies on it.
+  return store;
+}
+function identity(store) {
+  for (const key of ["createSchema", "stageLegacy", "verifyLegacy", "verifyInitialized", "readUsers", "readOrganization"]) wrap(store, key, "identity." + key);
+  return store;
+}
+function pool(value) {
+  const original = value.getConnection;
+  value.getConnection = async function (...values) {
+    return tracked("database.connect", async () => {
+      const connection = await original.apply(this, values);
+      if (!connections.has(connection)) {
+        connections.add(connection);
+        for (const key of ["query", "beginTransaction", "commit", "rollback"]) wrap(connection, key, "database." + key);
+      }
+      return connection;
+    });
+  };
+  wrap(value, "end", "database.close");
+  return value;
+}
+function load(name) {
+  if (cache.has(name)) return cache.get(name);
+  const location = path.join(path.dirname(filename), name), native = createRequire(location);
+  const module = { exports: {}, filename: location };
+  function local(request) {
+    if (request === "./mysql-store") return load("mysql-store.js");
+    if (request === "./mysql-auth-store") return load("mysql-auth-store.js");
+    const value = native(request);
+    if (request === "mysql2/promise") return { ...value, createPool: (...values) => pool(value.createPool(...values)) };
+    return value;
+  }
+  Object.assign(local, native);
+  const cli = new Function("require", "module", "exports", "__filename", "__dirname", source[name] + (name === "migrate-mysql.js" ? "\nreturn cli;" : ""))(local, module, module.exports, location, path.dirname(location));
+  const valueOriginal = module.exports;
+  let value = valueOriginal;
+  if (name === "mysql-store.js") value = { ...value, createMySQLStore: (...values) => business(valueOriginal.createMySQLStore(...values)) };
+  if (name === "mysql-auth-store.js") value = { ...value, createMySQLAuthStore: (...values) => identity(valueOriginal.createMySQLAuthStore(...values)) };
+  if (name === "migrate-mysql.js") value = cli;
+  cache.set(name, value);
+  return value;
+}
+function code(value) {
+  return typeof value === "string" && value.length <= 64 && /^(?:(?:ER_|PROTOCOL_|WARN_)[A-Z0-9_]+|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN)$/.test(value) ? value : null;
+}
+function number(value, maximum) { return Number.isInteger(value) && value >= 0 && value <= maximum ? value : null; }
+(async () => {
+  try {
+    if (path.basename(filename) !== "migrate-mysql.js" || !["--check", "--apply", "--verify"].includes(mode)) throw new Error("Unrecognized reviewed migration mode");
+    for (const [name, digest] of Object.entries(expected)) {
+      const location = path.join(path.dirname(filename), name), info = fs.lstatSync(location);
+      if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1) throw new Error("Unrecognized reviewed migration source");
+      const text = fs.readFileSync(location, "utf8");
+      if (crypto.createHash("sha256").update(text.replace(/\r\n/g, "\n").trimEnd() + "\n").digest("hex") !== digest) throw new Error("Unrecognized reviewed migration digest");
+      source[name] = text;
+      for (const token of text.match(/"(?:[^"\\]|\\.)*"/g) || []) { try { const value = JSON.parse(token); if (typeof value === "string" && value.length <= 400 && !/[\r\n\0]/.test(value)) messages.add(value); } catch (_) {} }
+    }
+    fallback = "cli";
+    const cli = load("migrate-mysql.js");
+    const result = await tracked("cli", () => cli(args));
+    process.stdout.write(JSON.stringify(result) + "\n");
+  } catch (error) {
+    const value = error && (typeof error === "object" || typeof error === "function") ? error : {};
+    const detail = { schemaVersion: 1, mode, stage: errors.get(value) || fallback,
+      name: names.has(value.name) ? value.name : "HIDDEN", code: code(value.code), errno: number(value.errno, 65535),
+      sqlState: typeof value.sqlState === "string" && /^[A-Z0-9]{5}$/.test(value.sqlState) ? value.sqlState : null,
+      status: number(value.status, 599), message: messages.has(value.message) ? value.message : "HIDDEN" };
+    process.stderr.write("HR_MYSQL_FAILURE " + JSON.stringify(detail) + "\n"); process.exitCode = 1;
+  }
+})();
+'''
 CODE = (*base.CODE, *SQL_MODULES)
 FILES = (*CODE, HTML)
 PATCH_FILES = base.PATCH_FILES
@@ -172,14 +279,51 @@ def service_environment():
 
 
 def migration_command(script, data, environment, mode):
+    require(mode in ('--check', '--apply', '--verify'), 'Unreviewed migration mode')
+    script = regular_file(pathlib.Path(script))
+    require(script.name == 'migrate-mysql.js', 'Unreviewed migration entry point')
+    messages = {'HIDDEN'}
+    for name, digest in SQL_HASHES.items():
+        raw = regular_file(script.parent / name).read_bytes()
+        require(canonical_hash(raw) == digest, 'Migration source differs from the fixed reviewed module')
+        for token in re.findall(r'"(?:[^"\\]|\\.)*"', raw.decode('utf-8')):
+            try:
+                value = json.loads(token)
+                if isinstance(value, str) and len(value) <= 400 and not any(char in value for char in '\r\n\0'):
+                    messages.add(value)
+            except ValueError:
+                pass
     env = {key: value for key, value in os.environ.items() if not key.startswith('HR_')}
     env.update(environment)
     env['NODE_PATH'] = str(APP / 'server/node_modules')
-    raw = helper.run(['node', script, '--config', APP / 'server/config.json', '--data-dir', data, mode], env=env, cwd=APP, timeout=900)
+    wrapper = NODE_MIGRATION_WRAPPER.replace('__SQL_HASHES__', json.dumps(SQL_HASHES))
+    result = subprocess.run(['node', '-e', wrapper, str(script), '--config', str(APP / 'server/config.json'), '--data-dir', str(data), mode],
+                            env=env, cwd=APP, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=900)
+    if result.returncode != 0:
+        detail = migration_failure(result.stderr, mode, messages)
+        raise Refused('MySQL migration failure ' + json.dumps(detail, sort_keys=True) if detail else 'Node migration failed; private diagnostics hidden')
+    raw = result.stdout
     result = json.loads(raw.decode().splitlines()[-1])
     require(isinstance(result, dict) and isinstance(result.get('contentSha256'), str) and SHA.fullmatch(result['contentSha256']) and
             isinstance(result.get('sourceDigest'), str) and SHA.fullmatch(result['sourceDigest']), 'Migration did not provide a bounded source proof')
     return result
+
+
+def migration_failure(raw, mode, messages):
+    try:
+        require(len(raw) <= 16384, 'Oversized private diagnostic')
+        lines = raw.decode('utf-8').strip().splitlines()
+        require(len(lines) == 1 and lines[0].startswith(DIAGNOSTIC_PREFIX), 'Unrecognized private diagnostic')
+        value = json.loads(lines[0][len(DIAGNOSTIC_PREFIX):], object_pairs_hook=base.unique_object)
+        require(isinstance(value, dict) and set(value) == {'schemaVersion', 'mode', 'stage', 'name', 'code', 'errno', 'sqlState', 'status', 'message'}, 'Unexpected private diagnostic fields')
+        require(type(value['schemaVersion']) is int and value['schemaVersion'] == 1 and value['mode'] == mode and
+                value['stage'] in DIAGNOSTIC_STAGES and value['name'] in DIAGNOSTIC_NAMES and value['message'] in messages, 'Unrecognized private diagnostic values')
+        require(value['code'] is None or isinstance(value['code'], str) and len(value['code']) <= 64 and re.fullmatch(r'(?:(?:ER_|PROTOCOL_|WARN_)[A-Z0-9_]+|MODULE_NOT_FOUND|ERR_MODULE_NOT_FOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|ENOTFOUND|EAI_AGAIN)', value['code']), 'Invalid diagnostic code')
+        require(value['sqlState'] is None or isinstance(value['sqlState'], str) and re.fullmatch(r'[A-Z0-9]{5}', value['sqlState']), 'Invalid diagnostic SQL state')
+        require(all(value[key] is None or type(value[key]) is int and 0 <= value[key] <= maximum for key, maximum in (('errno', 65535), ('status', 599))), 'Invalid diagnostic number')
+        return value
+    except (Refused, ValueError, TypeError, KeyError, UnicodeError):
+        return None
 
 
 def relation_proof(result):

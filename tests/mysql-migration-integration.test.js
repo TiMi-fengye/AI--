@@ -2,6 +2,10 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+const os = require("node:os");
+const { spawnSync } = require("node:child_process");
 const { migrate, verify } = require("../server/migrate-mysql");
 const { createMySQLStore, TABLES } = require("../server/mysql-store");
 const { createMySQLAuthStore, AUTH_TABLES } = require("../server/mysql-auth-store");
@@ -76,5 +80,81 @@ test("real MySQL migration keeps every entity, identity and attachment atomic, r
     // Only the randomly-created integration database can be dropped.
     assert.match(database, /^hr_migration_test_[a-f0-9]{16}$/);
     await bootstrap.query("DROP DATABASE IF EXISTS `" + database + "`"); await bootstrap.end();
+  }
+});
+
+test("the publisher Node wrapper runs the original CLI on actual MySQL, preserves shared transactions and verifies unchanged proofs", {
+  skip: process.platform === "win32" ? "The Linux publisher uses a temporary systemctl host fixture" : !configured && !required ? "Set HR_TEST_MYSQL_URL for an isolated local MySQL test server" : false,
+  timeout: 90000
+}, async () => {
+  assert.ok(configured, "Required MySQL integration database was not configured");
+  const url = new URL(process.env.HR_TEST_MYSQL_URL);
+  assert.ok(["127.0.0.1", "localhost", "[::1]"].includes(url.hostname), "Integration MySQL must use loopback");
+  assert.equal(Number(url.port || 3306), 3306, "The production migration CLI requires its existing local MySQL port");
+  const mysql = require("../server/node_modules/mysql2/promise");
+  const options = { host: url.hostname, port: 3306, user: decodeURIComponent(url.username), password: decodeURIComponent(url.password), charset: "utf8mb4" };
+  const bootstrap = await mysql.createConnection(options);
+  const database = "hr_wrapper_test_" + crypto.randomBytes(8).toString("hex");
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "hr-wrapper-test-"));
+  const code = path.join(folder, "server"), data = path.join(folder, "synthetic-data"), bin = path.join(folder, "synthetic-bin");
+  let pool;
+  try {
+    fs.mkdirSync(code); fs.mkdirSync(data); fs.mkdirSync(bin);
+    for (const name of ["mysql-store.js", "mysql-auth-store.js", "migrate-mysql.js"]) fs.copyFileSync(path.join(__dirname, "../server", name), path.join(code, name));
+    fs.symlinkSync(path.resolve(__dirname, "../server/node_modules"), path.join(code, "node_modules"), "dir");
+    fs.writeFileSync(path.join(code, "config.json"), JSON.stringify({ mysql: { enabled: true, ...options, database } }), { mode: 0o600 });
+    const users = { synthetic_admin: { name: "合成包装器管理员", role: "admin", phone: 42, passwordHash: "SYNTHETIC_HASH_SENTINEL", passwordSalt: "SYNTHETIC_SALT_SENTINEL", buildings: [], regions: [] } };
+    const organization = { schemaVersion: 1, revision: 2, options: { buildings: ["合成楼栋"], departments: [] } };
+    fs.writeFileSync(path.join(data, "auth-users.json"), JSON.stringify(users), { mode: 0o600 });
+    fs.writeFileSync(path.join(data, "organization-settings.json"), JSON.stringify(organization), { mode: 0o600 });
+    // This shim models only the CLI's read-only stopped-service precondition.
+    // No real systemctl, backend server, cloud service or production data is used.
+    fs.writeFileSync(path.join(bin, "systemctl"), '#!/bin/sh\nif [ "$1" = show ] && [ "$2" = hr-system.service ] && [ "$3" = -p ] && [ "$4" = ActiveState ] && [ "$5" = --value ]; then printf "inactive\\n"; else exit 93; fi\n', { mode: 0o700 });
+    const business = { revision: 9, employees: [{ id: 1, name: "合成包装器人员🦄", employeeNo: "00009", resumeData: "data:text/plain;base64,c3ludGhldGlj" }], attendance: [], overtime: [{ id: 2, employeeId: 1, hours: "02.50", status: "approved" }], leaveRequests: [], departments: ["合成部门", '{"string":"preserved"}'] };
+    await bootstrap.query("CREATE DATABASE `" + database + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin");
+    pool = mysql.createPool({ ...options, database });
+    await pool.query("CREATE TABLE system_snapshots (snapshot_key VARCHAR(64) NOT NULL PRIMARY KEY,payload LONGTEXT NOT NULL,updated_at DATETIME(3) NOT NULL) ENGINE=InnoDB CHARACTER SET utf8mb4");
+    await pool.query("INSERT INTO system_snapshots VALUES ('default',?,UTC_TIMESTAMP(3))", [JSON.stringify(business)]);
+    const program = `import importlib.util,json,pathlib,sys
+sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('actual_wrapper_release',sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+m.APP=pathlib.Path(sys.argv[2])
+try:
+ value=m.migration_command(m.APP/'server/migrate-mysql.js',pathlib.Path(sys.argv[3]),{},sys.argv[4]);print(json.dumps({'ok':True,'result':value}))
+except m.Refused as error:print(json.dumps({'ok':False,'error':str(error)}))
+`;
+    function invoke(mode) {
+      const result = spawnSync("python3", ["-c", program, path.resolve(__dirname, "../deploy/apply-mysql-relational.py"), folder, data, mode], {
+        encoding: "utf8", timeout: 30000, env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH }
+      });
+      assert.ifError(result.error); assert.equal(result.status, 0, result.stderr); return JSON.parse(result.stdout);
+    }
+    assert.equal(invoke("--check").result.readyToApply, true);
+    const failed = invoke("--apply"); assert.equal(failed.ok, false);
+    const detail = JSON.parse(failed.error.replace(/^MySQL migration failure /, ""));
+    assert.equal(detail.stage, "identity.stageLegacy"); assert.equal(detail.status, 400);
+    assert.doesNotMatch(JSON.stringify(failed), /SYNTHETIC_HASH_SENTINEL|SYNTHETIC_SALT_SENTINEL|合成包装器/);
+    const [[marker]] = await pool.query("SELECT initialized FROM hr_schema_meta WHERE id=1"); assert.equal(marker.initialized, 0);
+    for (const table of ["hr_employees", "hr_accounts"]) {
+      const [[row]] = await pool.query("SELECT COUNT(*) AS count FROM `" + table + "`"); assert.equal(Number(row.count), 0);
+    }
+    users.synthetic_admin.phone = "13800000009";
+    fs.writeFileSync(path.join(data, "auth-users.json"), JSON.stringify(users), { mode: 0o600 });
+    const before = invoke("--check"); const done = invoke("--apply"); const proof = invoke("--verify");
+    assert.equal(before.ok, true); assert.equal(done.ok, true); assert.equal(proof.ok, true);
+    assert.equal(done.result.status, "MYSQL_RELATIONAL_MIGRATED"); assert.equal(proof.result.status, "MYSQL_RELATIONAL_VERIFIED");
+    assert.equal(done.result.contentSha256, before.result.contentSha256); assert.equal(proof.result.contentSha256, done.result.contentSha256);
+    assert.equal(done.result.sourceDigest, before.result.sourceDigest); assert.equal(proof.result.tablesSha256, done.result.tablesSha256);
+    assert.equal(done.result.tables.length, 24); assert.equal(proof.result.databaseWritten, false);
+    const store = createMySQLStore(pool), identity = createMySQLAuthStore(store);
+    assert.deepEqual(await store.read(), business); assert.deepEqual(await identity.readUsers(), Object.assign(Object.create(null), users));
+    assert.deepEqual(await identity.readOrganization(), organization);
+    assert.doesNotMatch(JSON.stringify(done), /SYNTHETIC_HASH_SENTINEL|SYNTHETIC_SALT_SENTINEL|合成包装器/);
+  } finally {
+    if (pool) await pool.end();
+    assert.match(database, /^hr_wrapper_test_[a-f0-9]{16}$/);
+    await bootstrap.query("DROP DATABASE IF EXISTS `" + database + "`"); await bootstrap.end();
+    const resolved = path.resolve(folder); assert.equal(path.dirname(resolved), path.resolve(os.tmpdir())); assert.match(path.basename(resolved), /^hr-wrapper-test-/);
+    fs.rmSync(resolved, { recursive: true, force: true });
   }
 });

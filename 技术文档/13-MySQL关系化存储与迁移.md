@@ -66,3 +66,13 @@ MySQL的建表语句会隐式提交，因此不能声称“建表也全部回滚
 
 
 修复工具固定版本 [`e04018db368c392a5035db2b6e37ac44c9522d33`](https://github.com/TiMi-fengye/AI--/commit/e04018db368c392a5035db2b6e37ac44c9522d33)已通过[完整Linux、真实MySQL及实际root检查](https://github.com/TiMi-fengye/AI--/actions/runs/45399810036)，原始工具SHA256 `d38eab365e5bf76a9defc5f5fe359af1a9b98f57fb83cbb7d993b8b0e7ee241d`。重试必须从该固定工具目录运行，`--source`仍取原abf业务包；原清单SHA256 83e9e6a03a0599fee90a892bfbabb9b800d529b60d66c8dadfae1013426e6e63。已提供双包重试命令，待新MYSQL_RELATIONAL_OK回执，不能直接重复原工具命令。后续仅补记结果的文档提交不改变这个固定执行版本。
+
+## 2026-11-25 迁移阶段诊断
+
+随后执行返回`Relational publication stopped: node command failed`。所有者提供的只读状态为：业务服务active、以hrsystem运行、maintenanceGate=false，最近发布备份已有publication-tool而尚无precommit-proof或成功标记。进一步只读诊断确认24张关系表、元数据行存在、schemaVersion=1、initialized=false；原--check成功并允许迁移。已创建的DDL可以保留，不能把本次结果写成“数据库未变”；也不能以空表预检推断数据编码和SQL写入一定成功。
+
+本次只改发布工具的错误定位：受控Node入口加载并核对原三份SQL模块，取得原CLI，沿用原参数、服务环境、连接路径和迁移流程。成功仍返回原proof；失败仅输出固定阶段、受限错误类别/代码及完整匹配公开静态文字的消息，无法确认的内容隐藏。不打印原始stdout/stderr、SQL、参数、堆栈或账号和人员字段。同步工厂与事务连接函数保持同步，阶段装饰仅包明确的异步方法，保留原事务上下文。
+
+另提供`deploy/diagnose-mysql-relational.py --publication-backup /root/hr-system-backups/对应发布目录`先做只读兼容性诊断。工具核对原83e9归档和三份SQL模块，从只读事务读取旧业务源，用原encode/decode比对完整还原；账号和组织通过原身份工厂的纯内存适配器验证，不连接真实SQL写通道。检查前后源文件及业务摘要变化，变化时停止并要求重试。输出仅固定阶段和允许的静态消息，不输出数量、摘要或数据。此工具不执行--apply、不停止业务、不建表、不备份或修改生产文件；通过不代表SQL列约束及真实读回一定通过。
+
+原业务包、83e9固定清单及备份core保持。新工具需通过合成隐私/异常测试、原MySQL集成和实际root发布验证后才提供新的固定双包命令；旧失败命令不重复使用。再次执行仍先完整备份，在原停服闸门和受控回滚机制内调用原迁移，失败只报告诊断，不删数据或强行开放闸门。收到MYSQL_RELATIONAL_OK之前，不发布AI或输入DeepSeek密钥。

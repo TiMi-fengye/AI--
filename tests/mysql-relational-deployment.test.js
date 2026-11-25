@@ -364,6 +364,78 @@ test('real main check and default mode read the separate business package withou
   for (const mode of ['check', 'default-check']) assert.equal(invoke(`mode=${JSON.stringify(mode)}\n` + mainFixture).ok, true);
 });
 
+test('migration wrapper accepts only exact structured public diagnostics and never returns private stderr or SQL details', () => {
+  assert.deepEqual(invoke(`import copy,json
+safe={'schemaVersion':1,'mode':'--apply','stage':'business.stageLegacyBundle','name':'Error','code':'ER_DUP_ENTRY','errno':1062,'sqlState':'23000','status':None,'message':'HIDDEN'}
+encode=lambda value:(m.DIAGNOSTIC_PREFIX+json.dumps(value)+'\\n').encode()
+assert m.migration_failure(encode(safe),'--apply',{'HIDDEN'})==safe
+secret='SYNTHETIC_PRIVATE_KEY_PERSON_SQL'
+bad=[secret.encode(),encode(safe)+secret.encode(),encode(dict(safe,sql=secret)),encode(dict(safe,message=secret)),encode(dict(safe,stage=secret)),encode(dict(safe,code=secret)),encode(dict(safe,errno=secret)),encode(dict(safe,sqlState=secret)),encode(dict(safe,mode='--verify')),encode(dict(safe,name=secret)),encode(dict(safe,status=True)),(m.DIAGNOSTIC_PREFIX+'{"schemaVersion":1,"schemaVersion":1}').encode()]
+assert all(m.migration_failure(raw,'--apply',{'HIDDEN'}) is None for raw in bad)
+print(json.dumps({'ok':True}))`), {ok: true});
+});
+
+test('migration command retains original arguments, service HR environment, cwd and proof while bounding the subprocess and hiding raw errors', () => {
+  assert.deepEqual(invoke(model + `import os,subprocess
+with tempfile.TemporaryDirectory() as folder:
+ root=pathlib.Path(folder);m.APP=root/'app';server=m.APP/'server';server.mkdir(parents=True);data=root/'data';data.mkdir()
+ for name in m.SQL_HASHES:(server/name).write_bytes((pathlib.Path(m.__file__).parent.parent/'server'/name).read_bytes())
+ os.environ['HR_MYSQL_PASSWORD']='terminal-secret';os.environ['HR_AI_API_KEY']='terminal-ai-secret';calls=[]
+ def run(args,**kwargs):
+  calls.append((args,kwargs));return subprocess.CompletedProcess(args,0,(json.dumps(proof())+'\\n').encode(),b'private ignored stderr')
+ m.subprocess.run=run
+ result=m.migration_command(server/'migrate-mysql.js',data,{'HR_MYSQL_PASSWORD':'service-secret'},'--verify');assert result==proof()
+ args,options=calls[0];assert args[:2]==['node','-e'] and args[3:]==[str(server/'migrate-mysql.js'),'--config',str(server/'config.json'),'--data-dir',str(data),'--verify']
+ assert options['cwd']==m.APP and options['timeout']==900 and options['stdout']==subprocess.PIPE and options['stderr']==subprocess.PIPE
+ assert options['env']['HR_MYSQL_PASSWORD']=='service-secret' and 'HR_AI_API_KEY' not in options['env'] and options['env']['NODE_PATH']==str(server/'node_modules')
+ def fail(args,**kwargs):return subprocess.CompletedProcess(args,1,b'private rows',b'private key and SQL error')
+ m.subprocess.run=fail
+ try:m.migration_command(server/'migrate-mysql.js',data,{},'--verify')
+ except m.Refused as error:assert str(error)=='Node migration failed; private diagnostics hidden'
+ else:raise AssertionError('failed command accepted')
+ target=server/'mysql-store.js';target.write_bytes(target.read_bytes()+b'// unreviewed change')
+ try:m.migration_command(server/'migrate-mysql.js',data,{},'--verify')
+ except m.Refused:pass
+ else:raise AssertionError('unreviewed business module executed')
+ assert len(calls)==1
+print(json.dumps({'ok':True}))`), {ok: true});
+});
+
+test('actual Node loader preserves the original read-only CLI and exposes only static phase/code when a real reviewed method rejects', () => {
+  assert.deepEqual(invoke(`import pathlib,tempfile,json
+with tempfile.TemporaryDirectory() as folder:
+ root=pathlib.Path(folder);m.APP=root/'app';server=m.APP/'server';server.mkdir(parents=True);data=root/'data';data.mkdir()
+ for name in m.SQL_HASHES:(server/name).write_bytes((pathlib.Path(m.__file__).parent.parent/'server'/name).read_bytes())
+ (server/'config.json').write_text(json.dumps({'mysql':{'enabled':True,'host':'127.0.0.1','database':'synthetic_db','user':'synthetic_user','password':'SYNTHETIC_PRIVATE_KEY'}}))
+ (data/'auth-users.json').write_text('{}');(data/'organization-settings.json').write_text('{"options":{}}')
+ driver=server/'node_modules/mysql2';driver.mkdir(parents=True)
+ (driver/'promise.js').write_text(r'''
+exports.createPool = () => ({
+ getConnection: async () => ({
+  query: async sql => {
+   if (sql.startsWith('CREATE')) { const e = new Error('SYNTHETIC_PRIVATE_KEY employee SQL values'); e.code='ER_DUP_ENTRY'; e.errno=1062; e.sqlState='23000'; e.sql='private SQL'; throw e; }
+   if (sql.includes('DATABASE() AS name')) return [[{name:'synthetic_db'}],[]];
+   if (sql.includes('GET_LOCK')) return [[{acquired:1}],[]];
+   if (sql.includes('information_schema.tables')) return [[{name:'system_snapshots'}],[]];
+   if (sql.includes('SELECT payload')) return [[{payload:JSON.stringify({revision:3,employees:[]})}],[]];
+   if (sql.includes('RELEASE_ALL_LOCKS')) return [[],[]];
+   throw new Error('unexpected synthetic query');
+  },
+  beginTransaction:async()=>{},commit:async()=>{},rollback:async()=>{},release:()=>{}
+ }),end:async()=>{}
+});
+''')
+ checked=m.migration_command(server/'migrate-mysql.js',data,{},'--check')
+ assert checked['status']=='MYSQL_RELATIONAL_MIGRATION_CHECK' and checked['readyToApply'] is True and checked['applied'] is False
+ m.NODE_MIGRATION_WRAPPER="require('node:child_process').execFileSync=()=> 'inactive\\\\n';\\n"+m.NODE_MIGRATION_WRAPPER
+ try:m.migration_command(server/'migrate-mysql.js',data,{},'--apply')
+ except m.Refused as error:
+  message=str(error);assert 'SYNTHETIC_PRIVATE_KEY' not in message and 'private SQL' not in message
+  detail=json.loads(message.removeprefix('MySQL migration failure '));assert detail['stage']=='business.createSchema' and detail['code']=='ER_DUP_ENTRY' and detail['errno']==1062 and detail['sqlState']=='23000' and detail['message']=='HIDDEN'
+ else:raise AssertionError('SQL failure was not exposed safely')
+print(json.dumps({'ok':True}))`), {ok: true});
+});
+
 const rootFixture = {skip: typeof process.getuid !== 'function' || process.getuid() !== 0 ? 'POSIX root fixture runs in the protected-source CI step' : false};
 
 test('real main apply uses datetime, creates a private release directory and audits the repaired tool separately from original business sources', rootFixture, () => {
