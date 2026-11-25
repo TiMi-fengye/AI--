@@ -225,8 +225,11 @@ def reviewed_modules(publication):
     return {name: public_bytes(source / 'server' / name, sha, canonical=True).decode('utf-8-sig') for name, sha in MODULE_SHA.items()}
 
 
-def load_helper():
-    filename = pathlib.Path(__file__).absolute().with_name('apply-organization-fix.py')
+def load_helper(publication):
+    # codeload archives retain group-writable source modes. Execute only the
+    # already-audited, root-private helper saved by the failed publication;
+    # never weaken path protections or change the downloaded package's modes.
+    filename = pathlib.Path(publication) / 'publication-tool/apply-organization-fix.py'
     raw = public_bytes(filename, HELPER_SHA)
     helper = types.ModuleType('reviewed_readonly_runtime')
     helper.__file__ = str(filename)
@@ -269,7 +272,7 @@ def diagnose(publication):
         phase = 'publication-audit'
         modules = reviewed_modules(publication)
         phase = 'helper-audit'
-        helper = load_helper()
+        helper = load_helper(publication)
         phase = 'runtime-check'
         pid = helper.system_value('MainPID')
         data, _, _ = helper.runtime()

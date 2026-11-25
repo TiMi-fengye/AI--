@@ -153,6 +153,70 @@ for setting in [owners,links]:
 print(json.dumps({'ok':True}))`),{ok:true});
 });
 
+test("helper loading selects the audited publication copy and retains its exact digest instead of trusting an adjacent codeload helper",()=>{
+  assert.deepEqual(invoke(`import pathlib,hashlib
+raw=pathlib.Path(m.__file__).with_name('apply-organization-fix.py').read_bytes()
+assert hashlib.sha256(raw).hexdigest()==m.HELPER_SHA
+publication=pathlib.Path('/synthetic/2026-11-24-mysql-relational-231638-r44g9ru9')
+expected=publication/'publication-tool/apply-organization-fix.py'
+seen=[]
+def audited(path,sha):
+ assert path==expected and sha==m.HELPER_SHA
+ seen.append((str(path),sha));return raw
+m.public_bytes=audited
+m.__file__='/synthetic/group-writable-codeload/deploy/diagnose-mysql-relational.py'
+helper=m.load_helper(publication)
+assert helper.__file__==str(expected) and helper.OWNER=='hrsystem' and callable(helper.runtime)
+assert helper.runtime.__globals__ is helper.__dict__ and helper.runtime.__globals__['system_value'] is helper.system_value
+assert helper.runtime.__globals__['APP']==pathlib.Path('/opt/hr-system')
+assert seen==[(str(expected),m.HELPER_SHA)]
+print(json.dumps({'ok':True}))`),{ok:true});
+});
+
+test("root extraction of codeload's 0775 directories and 0664 helper remains refused while the 0700/0600 archived helper loads",{
+  skip:process.platform==="win32"?"real POSIX archive permissions require Linux root":process.getuid()!==0?"root-only path ownership is verified in the sudo CI job":false
+},()=>{
+  assert.deepEqual(invoke(`import pathlib,tempfile,tarfile,io,os,stat
+raw=pathlib.Path(m.__file__).with_name('apply-organization-fix.py').read_bytes()
+# These are the modes observed in the original abf244ec codeload tar headers.
+archive=io.BytesIO()
+with tarfile.open(fileobj=archive,mode='w') as bundle:
+ for name in ('release','release/deploy'):
+  row=tarfile.TarInfo(name);row.type=tarfile.DIRTYPE;row.mode=0o775;row.uid=row.gid=0;bundle.addfile(row)
+ row=tarfile.TarInfo('release/deploy/apply-organization-fix.py');row.mode=0o664;row.uid=row.gid=0;row.size=len(raw);bundle.addfile(row,io.BytesIO(raw))
+with tempfile.TemporaryDirectory(prefix='hr-readonly-helper-regression-',dir='/tmp') as folder:
+ root=pathlib.Path(folder)
+ with tarfile.open(fileobj=io.BytesIO(archive.getvalue()),mode='r') as bundle:
+  # The synthetic archive has only the three fixed public entries above.
+  # Preserve modes like root's production tar command, including on Python 3.14.
+  bundle.extractall(root/'downloaded',filter='fully_trusted')
+ downloaded=root/'downloaded/release/deploy/apply-organization-fix.py'
+ assert stat.S_IMODE(downloaded.parent.stat().st_mode)==0o775 and stat.S_IMODE(downloaded.stat().st_mode)==0o664
+ try:m.public_bytes(downloaded,m.HELPER_SHA)
+ except m.Refused:pass
+ else:raise AssertionError('group-writable downloaded helper was trusted')
+ publication=root/'backups/2026-11-24-mysql-relational-231638-r44g9ru9'
+ for directory in (root/'backups',publication,publication/'publication-tool'):directory.mkdir(mode=0o700)
+ filename=publication/'publication-tool/apply-organization-fix.py';filename.write_bytes(raw);filename.chmod(0o600)
+ m.__file__=str(downloaded.parent/'diagnose-mysql-relational.py')
+ helper=m.load_helper(publication)
+ assert helper.__file__==str(filename) and helper.OWNER=='hrsystem'
+ assert helper.checked_path(filename,'file')==filename
+ assert helper.runtime.__globals__ is helper.__dict__
+ assert helper.runtime.__globals__['APP']==pathlib.Path('/opt/hr-system')
+ assert helper.runtime.__globals__['run'] is helper.run and helper.runtime.__globals__['system_value'] is helper.system_value
+ filename.chmod(0o664)
+ try:m.load_helper(publication)
+ except m.Refused:pass
+ else:raise AssertionError('writable archived helper was trusted')
+ filename.chmod(0o600);filename.write_bytes(raw+b'\\n# unreviewed')
+ try:m.load_helper(publication)
+ except m.Refused:pass
+ else:raise AssertionError('unreviewed archived helper was trusted')
+ assert stat.S_IMODE(downloaded.stat().st_mode)==0o664 and stat.S_IMODE(downloaded.parent.stat().st_mode)==0o775
+print(json.dumps({'ok':True}))`),{ok:true});
+});
+
 test("Python accepts only bounded allowlisted result fields and never forwards raw subprocess stderr",()=>{
   assert.deepEqual(invoke(`import copy
 valid={'status':'MYSQL_RELATIONAL_COMPATIBILITY_ERROR','stage':'business-encode','message':'同一集合记录编号重复','readOnly':True,'databaseWritten':False,'serviceRestarted':False}
@@ -174,7 +238,7 @@ m.os=types.SimpleNamespace(name='posix',geteuid=lambda:0)
 m.reviewed_modules=lambda path:{'synthetic':'public'}
 seen=[]
 helper=types.SimpleNamespace(system_value=lambda name:seen.append(('system_value',name)) or '123',runtime=lambda:seen.append(('runtime',)) or (pathlib.Path('/synthetic/data'),8080,'synthetic'))
-m.load_helper=lambda:helper
+m.load_helper=lambda publication:helper
 m.service_environment=lambda helper,pid:{'HR_MYSQL_PASSWORD':'SYNTHETIC_PRIVATE_VALUE'}
 value={'status':'MYSQL_RELATIONAL_COMPATIBILITY_OK','stage':'finished','message':'Compatibility checks passed; real SQL constraints still require controlled migration verification','readOnly':True,'databaseWritten':False,'serviceRestarted':False}
 def run(args,**kwargs):
@@ -196,7 +260,7 @@ valid={'status':'MYSQL_RELATIONAL_COMPATIBILITY_OK','stage':'finished','message'
 for phase in ('publication-audit','helper-audit','runtime-check','environment-capture','node-execution','node-output'):
  m.reviewed_modules=fail if phase=='publication-audit' else lambda path:{'synthetic':'public'}
  helper=types.SimpleNamespace(system_value=lambda name:'123',runtime=fail if phase=='runtime-check' else lambda:(pathlib.Path('/synthetic/data'),8080,'synthetic'))
- m.load_helper=fail if phase=='helper-audit' else lambda:helper
+ m.load_helper=fail if phase=='helper-audit' else lambda publication:helper
  m.service_environment=fail if phase=='environment-capture' else lambda *args:{}
  m.subprocess=types.SimpleNamespace(PIPE=-1,run=fail if phase=='node-execution' else lambda *args,**kwargs:types.SimpleNamespace(returncode=0,stdout=poison.encode() if phase=='node-output' else json.dumps(valid).encode(),stderr=poison.encode()))
  output=io.StringIO()
