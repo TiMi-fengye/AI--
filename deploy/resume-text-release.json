@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "files": {
+    "js/employees.js": {
+      "beforeSha256": "c10f1385f25fc135281fd8570606ad580740d2ae824cb7f0e4cd5955924bb90f",
+      "afterSha256": "293ebfcfcf6c77717f671f409488800d0f23e49596d717f37e839d4ad498365b"
+    },
+    "js/employee-profile.js": {
+      "beforeSha256": "9d65f398edf3e9345670aa275f6265fd40cb5746158f13cdabdbb6e6843070df",
+      "afterSha256": "e4113d6041d8caee120c8f7f3971d2c93afec7cd86e255a25b572e0d6c3f2be0"
+    }
+  },
+  "architectureSha256": "c495146d04eac81fbcc5c35fa40505b353a2891970c40465e1a3a789494c2b67"
+}

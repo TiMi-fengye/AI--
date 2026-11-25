@@ -54,37 +54,44 @@ const EmpProfile = {
     if (!this._employee(id,true)) return;
     var input=document.getElementById('resumeFileInput');
     if (!input||!input.files||!input.files[0]) return;
-    var file=input.files[0], self=this;
+    var file=input.files[0], self=this, actor=Auth.currentUser(), upload=(this._uploadEpoch||0)+1;
+    this._uploadEpoch=upload;
+    var currentUpload=function() { var overlay=document.getElementById('modalOverlay'); return self._uploadEpoch===upload && Auth.currentUser()===actor && document.getElementById('resumeFileInput')===input && input.isConnected!==false && (!overlay||overlay.classList.contains('show')) && !!self._employee(id,true); };
     if (file.size>10*1024*1024) { App.toast('简历附件不得超过10MB','error'); return; }
     var reader=new FileReader();
     reader.onload=async function(event) {
+      if (!currentUpload()) return;
       if (!self._safeResumeData(event.target.result)) { App.toast('请上传 PDF、Word、表格、纯文本或常见图片文件','error'); return; }
       var emp=self._employee(id,true);
       if (!emp) return;
-      var textReader=new FileReader();
-      textReader.onload=async function(textEvent) {
-        if (!self._employee(id,true)) return;
-        var text=String(textEvent.target.result||'').substring(0,5000);
+      try {
+        var text='', extractionError=null;
+        if (Auth.isAdmin()) {
+          try { text=await Employees._readResumeText(file); }
+          catch(error) { extractionError=error; }
+        }
+        if (!currentUpload()) return;
         var employees=Store.getEmployees();
         var current=employees.find(function(employee) { return Number(employee.id)===Number(id); });
         if (!current) return;
         current.resumeData=event.target.result; current.resumeName=file.name; current._resumeText=text;
         Store.set('employees',employees);
-        try {
           await Store.flushServerSync();
+          if (!currentUpload()) return;
           var ai=typeof AI!=='undefined'?AI:null, cfg=ai?ai.getConfig():null;
           if (Auth.isAdmin()&&cfg&&cfg.endpoint&&text.length>10) { App.toast('简历已上传，AI正在分析…','info'); await self._doAutoAnalyze(id,text); }
+          else if (extractionError) App.toast('附件已保存；'+(extractionError.message||'请手动粘贴简历正文再分析'),'warning');
           else { App.toast('简历已上传','success'); App.closeModal(); }
-        } catch(error) { App.toast(error.message||'简历保存失败','error'); }
-      };
-      textReader.onerror=function() { App.toast('附件读取失败，请重试','error'); };
-      textReader.readAsText(file);
+      } catch(error) { if (currentUpload()) App.toast(error.message||'简历保存失败','error'); }
     };
     reader.onerror=function() { App.toast('附件读取失败，请重试','error'); };
     reader.readAsDataURL(file);
   },
   async _doAutoAnalyze(id,text) {
     if (!this._canAnalyze(id)) return;
+    var actor=Auth.currentUser(), original=this._employee(id,true), input=document.getElementById('resumeText')||document.getElementById('resumeFileInput');
+    var current=this;
+    var valid=function() { var overlay=document.getElementById('modalOverlay'), employee; if (Auth.currentUser()!==actor || (overlay&&!overlay.classList.contains('show')) || (input&&document.getElementById(input.id||'resumeFileInput')!==input)) return false; employee=current._employee(id,true); return !!employee && employee.resumeData===original.resumeData && employee.aiProfile===original.aiProfile; };
     var ai=typeof AI!=='undefined'?AI:null, cfg=ai?ai.getConfig():null;
     if (!cfg||!cfg.endpoint) { App.toast('请先由管理员在 AI 查询与报表中配置服务','warning'); return; }
     var prompt='你是专业的HR分析师。根据以下简历内容，分析该人员掌握的核心技能、技术栈和工作背景，生成约100字的人员简介。\n\n简历内容：\n'+String(text).slice(0,5000);
@@ -94,13 +101,15 @@ const EmpProfile = {
       var data=await response.json();
       var reply=data.choices&&data.choices[0]&&data.choices[0].message?data.choices[0].message.content:'';
       if (!reply) { App.toast('AI分析无结果','error'); return; }
-      if (!this._canAnalyze(id)) return;
+      if (!valid() || !this._canAnalyze(id)) return;
       var employees=Store.getEmployees(), employee=employees.find(function(employee) { return Number(employee.id)===Number(id); });
       if (!employee) return;
       employee.aiProfile=String(reply); Store.set('employees',employees);
+      original.aiProfile=String(reply);
       await Store.flushServerSync();
+      if (!valid() || !Auth.isAdmin()) return;
       App.toast('AI简介已生成','success'); App.closeModal();
-    } catch(error) { App.toast(error.message||'AI请求失败','error'); }
+    } catch(error) { if (valid()) App.toast(error.message||'AI请求失败','error'); }
   },
   downloadResume(id) {
     var emp=this._employee(id,false);
@@ -112,6 +121,7 @@ const EmpProfile = {
   },
   async deleteResume(id) {
     if (!this._employee(id,true)||!App.confirm('确定删除简历？')) return;
+    this._uploadEpoch=(this._uploadEpoch||0)+1;
     var employees=Store.getEmployees(), emp=employees.find(function(employee) { return Number(employee.id)===Number(id); });
     if (!emp) return;
     emp.resumeData=null; emp.resumeName=null; emp._resumeText='';
@@ -122,7 +132,7 @@ const EmpProfile = {
   analyzeResume(id) {
     if (!this._canAnalyze(id)) return;
     var emp=this._employee(id,false);
-    if (emp._resumeText) return this._doAutoAnalyze(id,emp._resumeText);
+    if (emp._resumeText && /\.(?:txt|docx)$/i.test(emp.resumeName||'') && !/[\x00-\x08\x0b\x0c\x0e-\x1f\uFFFD]/.test(emp._resumeText)) return this._doAutoAnalyze(id,emp._resumeText);
     App.openModal('AI 分析简历','<p>粘贴简历内容，系统将分析并生成人员简介：</p><textarea class="form-control" id="resumeText" rows="10" placeholder="请粘贴简历内容"></textarea>',
       '<button class="btn btn-primary" onclick="EmpProfile._doAnalyze('+Number(id)+')">开始分析</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>');
   },

@@ -339,6 +339,15 @@ const Employees = {
   _pendingResume: null,
   _pendingCredential: null,
   _resumeText: '',
+  _resumeEpoch: 0,
+  _resumeContext() {
+    return { epoch: ++this._resumeEpoch, area: document.getElementById('empAiProfile'), actor: Auth.currentUser() };
+  },
+  _resumeCurrent(request) {
+    var overlay = document.getElementById('modalOverlay');
+    return !!request.area && document.getElementById('empAiProfile') === request.area && request.area.isConnected !== false &&
+      (!overlay || overlay.classList.contains('show')) && request.epoch === this._resumeEpoch && request.actor === Auth.currentUser();
+  },
 
   showAddModal() {
     if (!Auth.isAdmin() && !Auth.isLeader()) { App.toast('仅管理员或楼长可添加人员', 'warning'); return; }
@@ -347,6 +356,7 @@ const Employees = {
     this._pendingResume = { data: '', name: '' };
     this._pendingCredential = { data: '', name: '' };
     this._resumeText = '';
+    this._resumeEpoch++;
     App.openModal('添加人员', this._formHtml(null),
       '<button class="btn btn-primary" onclick="Employees.save()">保存</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>');
     setTimeout(function () { self._syncAttachmentButtons(); }, 50);
@@ -361,6 +371,7 @@ const Employees = {
     this._pendingResume = { data: emp.resumeData || '', name: emp.resumeName || '' };
     this._pendingCredential = { data: emp.credentialData || '', name: emp.credentialName || '' };
     this._resumeText = '';
+    this._resumeEpoch++;
     App.openModal(this._editReturnPage === 'profile' ? '维护我的资料' : '编辑人员', this._formHtml(emp),
       '<button class="btn btn-primary" onclick="Employees.save()">保存</button><button class="btn btn-outline" onclick="App.closeModal()">取消</button>');
     setTimeout(function () { self._syncAttachmentButtons(); }, 50);
@@ -383,15 +394,18 @@ const Employees = {
     var file = ev.target.files && ev.target.files[0];
     if (!file) return;
     if (file.size > 3 * 1024 * 1024) { App.toast('附件请控制在3MB以内', 'warning'); ev.target.value = ''; return; }
-    var self = this;
+    var self = this, request = this._resumeContext();
+    this._resumeText = '';
     var reader = new FileReader();
     reader.onload = function (e2) {
+      if (!self._resumeCurrent(request)) return;
       self._pendingResume = { data: String(e2.target.result || ''), name: file.name };
       var label = document.getElementById('empResumeName');
       if (label) label.textContent = '已上传: ' + file.name;
       self._syncAttachmentButtons();
       if (Auth.isAdmin()) self._extractResumeText(file);
     };
+    reader.onerror = function () { if (self._resumeCurrent(request)) App.toast('附件读取失败，请重新选择文件', 'warning'); };
     reader.readAsDataURL(file);
     ev.target.value = '';
   },
@@ -412,31 +426,37 @@ const Employees = {
     ev.target.value = '';
   },
 
-  /** 读取简历文本（txt / docx 提取，pdf、doc 兜底） */
-  _extractResumeText(file) {
-    var self = this;
-    var name = (file.name || '').toLowerCase();
-    var reader = new FileReader();
-    reader.onload = function (e) {
-      var buf = e.target.result;
-      var done = function (text) {
-        self._resumeText = (text || '').trim();
-        if (self._resumeText.length >= 10) {
-          App.toast('简历已读取，正在生成 AI 简介...', 'info');
-          self.autoGenerateProfile();
-        } else {
-          App.toast('无法自动读取附件文本，可手动粘贴到 AI 简介', 'warning');
-        }
-      };
-      try {
-        if (name.indexOf('.docx') >= 0) {
-          self._extractDocx(buf, done);
-        } else {
-          done(self._cleanText(new TextDecoder('utf-8').decode(new Uint8Array(buf))));
-        }
-      } catch (ex) { done(''); }
-    };
-    reader.readAsArrayBuffer(file);
+  /** 只解析文本及标准DOCX，不把PDF/旧Word/图片二进制当作简历。 */
+  async _readResumeText(file) {
+    if (!file || !/\.(?:txt|docx)$/i.test(file.name || '')) throw new Error('此格式暂不支持自动读取，请将简历另存为 DOCX/TXT，或手动粘贴正文');
+    if (file.size > 10 * 1024 * 1024) throw new Error('附件过大，请使用10MB以内的简历');
+    var buf = await new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function (e) { resolve(e.target.result); };
+      reader.onerror = reader.onabort = function () { reject(new Error('附件读取失败，请重新选择文件')); };
+      reader.readAsArrayBuffer(file);
+    });
+    if (/\.docx$/i.test(file.name)) {
+      var failure;
+      var text = await this._extractDocx(buf, function (_, error) { failure = error; });
+      if (failure) throw failure;
+      return text;
+    }
+    return new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(buf)).replace(/^\uFEFF/, '').trim().slice(0, 60000);
+  },
+  async _extractResumeText(file) {
+    var request = this._resumeContext();
+    this._resumeText = '';
+    try {
+      var text = await this._readResumeText(file);
+      if (!this._resumeCurrent(request) || !Auth.isAdmin()) return;
+      if (text.length < 10) throw new Error('附件中未识别到足够文字，请手动粘贴简历正文');
+      this._resumeText = text;
+      App.toast('简历已读取，正在生成 AI 简介...', 'info');
+      return this.autoGenerateProfile();
+    } catch (error) {
+      if (this._resumeCurrent(request)) App.toast(error.message || '无法读取简历，请手动粘贴正文', 'warning');
+    }
   },
 
   _cleanText(t) {
@@ -445,43 +465,78 @@ const Employees = {
     return t.replace(/\s+/g, ' ').trim();
   },
 
-  /** 解析 docx（zip → word/document.xml） */
-  _extractDocx(buf, cb) {
-    var self = this;
-    var bytes = new Uint8Array(buf);
-    var view = new DataView(buf);
-    var i = 0, entries = [];
-    while (i + 30 <= bytes.length) {
-      if (view.getUint32(i, true) !== 0x04034b50) break;
-      var method = view.getUint16(i + 8, true);
-      var compSize = view.getUint32(i + 18, true);
-      var nameLen = view.getUint16(i + 26, true);
-      var extraLen = view.getUint16(i + 28, true);
-      var entryName = new TextDecoder('utf-8').decode(bytes.subarray(i + 30, i + 30 + nameLen));
-      var dataStart = i + 30 + nameLen + extraLen;
-      entries.push({ name: entryName, method: method, start: dataStart, end: dataStart + compSize });
-      i = dataStart + compSize;
+  _docxXmlText(xml) {
+    if (/<!DOCTYPE|<!ENTITY/i.test(xml) || typeof DOMParser === 'undefined') throw new Error('Word正文格式不支持，请另存为标准DOCX或手动粘贴正文');
+    var doc = new DOMParser().parseFromString(xml, 'application/xml'), root = doc.documentElement;
+    var namespaces = ['http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'http://purl.oclc.org/ooxml/wordprocessingml/main'];
+    if (!root || root.localName !== 'document' || namespaces.indexOf(root.namespaceURI) < 0 || doc.getElementsByTagName('parsererror').length) throw new Error('Word正文损坏，请另存为DOCX后重试');
+    var parts = [], length = 0;
+    function add(value) { if (length < 60000) { var part = String(value).slice(0, 60000 - length); parts.push(part); length += part.length; } }
+    function walk(node) {
+      if (!node || length >= 60000) return;
+      var word = namespaces.indexOf(node.namespaceURI) >= 0, name = node.localName;
+      if (word && ['del', 'moveFrom', 'instrText'].indexOf(name) >= 0) return;
+      if (word && name === 't') { add(node.textContent || ''); return; }
+      if (word && name === 'tab') { add('\t'); return; }
+      if (word && (name === 'br' || name === 'cr')) { add('\n'); return; }
+      Array.prototype.forEach.call(node.childNodes || [], walk);
+      if (word && name === 'p') add('\n');
     }
-    var doc = null;
-    for (var j = 0; j < entries.length; j++) {
-      if (entries[j].name === 'word/document.xml') { doc = entries[j]; break; }
-    }
-    if (!doc) { cb(''); return; }
-    var data = bytes.subarray(doc.start, doc.end);
-    var stripXml = function (xml) {
-      if (!xml) return '';
-      xml = xml.replace(/<[^>]+>/g, ' ');
-      xml = xml.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&#39;/g, "'");
-      return self._cleanText(xml);
-    };
-    if (doc.method === 0) { cb(stripXml(new TextDecoder('utf-8').decode(data))); return; }
-    if (typeof DecompressionStream === 'undefined') { cb(''); return; }
+    walk(root);
+    return parts.join('').trim();
+  },
+  /** 由中央目录确定正文边界，支持Word写入的数据描述符。 */
+  async _extractDocx(buf, cb) {
+    var text = '', failure = null;
     try {
-      var stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-      stream.arrayBuffer().then(function (ab) {
-        cb(stripXml(new TextDecoder('utf-8').decode(new Uint8Array(ab))));
-      }).catch(function () { cb(''); });
-    } catch (ex) { cb(''); }
+      var bytes = new Uint8Array(buf), view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), max = 4 * 1024 * 1024;
+      var invalid = function () { throw new Error('无法读取此Word文件，请另存为未加密的标准DOCX，或手动粘贴正文'); };
+      if (bytes.length < 22 || bytes.length > 10 * 1024 * 1024) invalid();
+      var end = -1;
+      for (var i = bytes.length - 22; i >= Math.max(0, bytes.length - 65557); i--) {
+        if (view.getUint32(i, true) === 0x06054b50 && i + 22 + view.getUint16(i + 20, true) === bytes.length) { end = i; break; }
+      }
+      if (end < 0) invalid();
+      var count = view.getUint16(end + 10, true), size = view.getUint32(end + 12, true), offset = view.getUint32(end + 16, true);
+      if (view.getUint16(end + 4, true) || view.getUint16(end + 6, true) || view.getUint16(end + 8, true) !== count || !count || count > 4096 || offset + size > end) invalid();
+      var doc = null, cursor = offset, directoryEnd = offset + size, decoder = new TextDecoder('utf-8', { fatal: true });
+      for (var n = 0; n < count; n++) {
+        if (cursor + 46 > directoryEnd || view.getUint32(cursor, true) !== 0x02014b50) invalid();
+        var nameLength = view.getUint16(cursor + 28, true), extra = view.getUint16(cursor + 30, true), comment = view.getUint16(cursor + 32, true);
+        var next = cursor + 46 + nameLength + extra + comment;
+        if (next > directoryEnd) invalid();
+        if (nameLength === 17 && decoder.decode(bytes.subarray(cursor + 46, cursor + 46 + nameLength)) === 'word/document.xml') {
+          if (doc) invalid();
+          doc = { flags: view.getUint16(cursor + 8, true), method: view.getUint16(cursor + 10, true), crc: view.getUint32(cursor + 16, true), compressed: view.getUint32(cursor + 20, true), size: view.getUint32(cursor + 24, true), local: view.getUint32(cursor + 42, true) };
+        }
+        cursor = next;
+      }
+      if (cursor !== directoryEnd || !doc || doc.flags & 0x2041 || !doc.size || doc.size > max || doc.compressed > bytes.length || doc.local + 30 > offset) invalid();
+      var at = doc.local;
+      if (view.getUint32(at, true) !== 0x04034b50 || view.getUint16(at + 6, true) !== doc.flags || view.getUint16(at + 8, true) !== doc.method) invalid();
+      var localName = view.getUint16(at + 26, true), start = at + 30 + localName + view.getUint16(at + 28, true);
+      if (start > offset || start + doc.compressed > offset || decoder.decode(bytes.subarray(at + 30, at + 30 + localName)) !== 'word/document.xml') invalid();
+      if (!(doc.flags & 8) && (view.getUint32(at + 18, true) !== doc.compressed || view.getUint32(at + 22, true) !== doc.size)) invalid();
+      var data = bytes.subarray(start, start + doc.compressed), output;
+      if (doc.method === 0) { if (doc.compressed !== doc.size) invalid(); output = data; }
+      else if (doc.method === 8) {
+        if (typeof DecompressionStream === 'undefined') throw new Error('当前浏览器不支持Word自动读取，请升级浏览器或手动粘贴正文');
+        var reader = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader(), chunks = [], total = 0;
+        try {
+          while (true) { var item = await reader.read(); if (item.done) break; total += item.value.length; if (total > doc.size || total > max) invalid(); chunks.push(item.value); }
+          if (total !== doc.size) invalid();
+        } catch (error) { await reader.cancel().catch(function () {}); throw error; }
+        finally { reader.releaseLock(); }
+        output = new Uint8Array(total); var used = 0;
+        chunks.forEach(function (chunk) { output.set(chunk, used); used += chunk.length; });
+      } else invalid();
+      var crc = 0xffffffff;
+      output.forEach(function (byte) { crc ^= byte; for (var b = 0; b < 8; b++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0); });
+      if (((crc ^ 0xffffffff) >>> 0) !== doc.crc) invalid();
+      text = this._docxXmlText(decoder.decode(output));
+    } catch (error) { failure = new Error(error.message || '无法读取Word正文，请手动粘贴正文'); }
+    if (cb) cb(text, failure);
+    return text;
   },
 
   downloadPendingResume() {
@@ -492,6 +547,8 @@ const Employees = {
   },
 
   clearPendingResume() {
+    this._resumeEpoch++;
+    this._resumeText = '';
     this._pendingResume = { data: '', name: '' };
     var label = document.getElementById('empResumeName');
     if (label) label.textContent = '未上传简历';
@@ -513,33 +570,37 @@ const Employees = {
   },
 
   /** AI 自动生成人员简介（上传简历后自动触发，也可手动点击） */
-  autoGenerateProfile() {
+  async autoGenerateProfile() {
     if (!Auth.isAdmin()) { App.toast('仅管理员可使用 AI 分析', 'warning'); return; }
-    var text = this._resumeText;
+    if (this._analysisRequest && this._resumeCurrent(this._analysisRequest)) return;
+    var request = this._resumeContext(), area = request.area;
+    if (!area) return;
+    var text = this._resumeText || area.value;
     if (!text || text.trim().length < 10) {
-      App.toast('请先上传可读取文本的简历', 'warning');
+      App.toast('请上传DOCX/TXT，或在简介栏粘贴简历正文', 'warning');
       return;
     }
-    var cfg = (typeof AI !== 'undefined' && AI.getConfig) ? AI.getConfig() : null;
-    var endpoint = (cfg && cfg.endpoint) ? cfg.endpoint : (window.location.protocol + '//' + window.location.hostname + ':11434/v1/chat/completions');
-    var model = (cfg && cfg.model) ? cfg.model : 'mock-ai';
-    var headers = { 'Content-Type': 'application/json' };
-    if (cfg && cfg.apiKey) headers.Authorization = 'Bearer ' + cfg.apiKey;
+    this._analysisRequest = request;
+    var original = area.value;
     App.toast('AI 正在分析简历...', 'info');
     var prompt = '你是专业HR分析师，请根据简历内容生成约100字的人员简介，重点提炼重要技能、技术栈和工作背景。\n\n简历：\n' + text.slice(0, 6000);
-    fetch(endpoint, {
+    try {
+      var response = await fetch('/api/ai/chat', {
       method: 'POST',
-      headers: headers,
-      body: JSON.stringify({ model: model, messages: [{ role: 'user', content: prompt }], max_tokens: 512, temperature: 0.7, stream: false })
-    })
-      .then(function (r) { return r.json(); })
-      .then(function (d) {
-        var reply = (d.choices && d.choices[0] && d.choices[0].message ? d.choices[0].message.content : '') || d.response || '';
-        var ta = document.getElementById('empAiProfile');
-        if (reply && ta) ta.value = reply;
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: prompt }], max_tokens: 512, temperature: 0.7, stream: false })
+      });
+      var d = await response.json();
+      if (!this._resumeCurrent(request) || !Auth.isAdmin() || area.value !== original) return;
+      if (!response.ok) throw new Error((d.error && d.error.message) || d.message || 'AI分析失败，请稍后重试');
+      var reply = (d.choices && d.choices[0] && d.choices[0].message ? d.choices[0].message.content : '') || '';
+      if (typeof reply === 'string' && reply) area.value = reply;
         App.toast(reply ? 'AI 简介已自动生成' : 'AI 未返回内容，请检查 AI 配置', reply ? 'success' : 'warning');
-      })
-      .catch(function () { App.toast('AI 请求失败：请先在 AI 问答中配置可访问的 API 地址和模型', 'error'); });
+    } catch (error) {
+      if (this._resumeCurrent(request)) App.toast(error.message || 'AI分析失败，请稍后重试', 'error');
+    } finally {
+      if (this._analysisRequest === request) this._analysisRequest = null;
+    }
   },
 
   readFormData() {
